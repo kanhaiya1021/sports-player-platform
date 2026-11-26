@@ -29,9 +29,9 @@ jQuery(document).ready(function($) {
             profile_id: profileId,
             nonce: nonce
         }).done(function(response) {
-            location.reload();
-        }).fail(function() {
-            alert('Approval failed. Please try again.');
+            window.location.assign(response.data.redirect_url);
+        }).fail(function(xhr) {
+            alert(xhr.responseJSON?.data?.message || 'Approval failed. Please try again.');
         });
     });
 
@@ -49,9 +49,9 @@ jQuery(document).ready(function($) {
             profile_id: profileId,
             nonce: nonce
         }).done(function(response) {
-            location.reload();
-        }).fail(function() {
-            alert('Rejection failed. Please try again.');
+            window.location.assign(response.data.redirect_url);
+        }).fail(function(xhr) {
+            alert(xhr.responseJSON?.data?.message || 'Rejection failed. Please try again.');
         });
     });
 

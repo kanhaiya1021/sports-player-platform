@@ -48,7 +48,7 @@ if (!class_exists('SPP_Dashboard')) {
                 return;
             }
 
-            $request_path = trim((string) parse_url(add_query_arg([]), PHP_URL_PATH), '/');
+            $request_path = is_page() ? (string) get_page_uri(get_queried_object_id()) : '';
             $is_dashboard = ($request_path === 'dashboard' || strpos($request_path, 'dashboard/') === 0);
 
             if (!$is_dashboard && !$this->post_has_dashboard_shortcode()) {
@@ -203,15 +203,15 @@ if (!class_exists('SPP_Dashboard')) {
                 'post_title'   => $player_name,
                 'post_content' => $bio,
                 'post_type'    => 'player',
-                'post_author'  => $user_id,
+                'post_author'  => $existing_post ? $existing_post->post_author : $user_id,
                 'post_status'  => 'spp_pending',
             ];
 
             if ($existing_post) {
                 $post_data['ID'] = $existing_post->ID;
-                $post_id         = wp_update_post($post_data, true);
+                $post_id         = wp_update_post(wp_slash($post_data), true);
             } else {
-                $post_id = wp_insert_post($post_data, true);
+                $post_id = wp_insert_post(wp_slash($post_data), true);
             }
 
             if (is_wp_error($post_id)) {
@@ -229,17 +229,15 @@ if (!class_exists('SPP_Dashboard')) {
                 'graduation_year'   => absint($_POST['graduation_year'] ?? 0) ?: '',
                 'school'            => sanitize_text_field(wp_unslash($_POST['school'] ?? '')),
                 'image_gallery'     => sanitize_textarea_field(wp_unslash($_POST['image_gallery'] ?? '')),
-                'videos_highlights' => esc_url_raw(wp_unslash($_POST['videos_highlights'] ?? '')),
+                'videos_highlights' => sanitize_textarea_field(wp_unslash($_POST['videos_highlights'] ?? '')),
                 'gpa'               => sanitize_text_field(wp_unslash($_POST['gpa'] ?? '')),
                 'sat_act_scores'    => sanitize_text_field(wp_unslash($_POST['sat_act_scores'] ?? '')),
                 'awards'            => sanitize_textarea_field(wp_unslash($_POST['awards'] ?? '')),
             ];
 
-            foreach ($meta_fields as $key => $value) {
-                update_post_meta($post_id, $key, $value);
-            }
+            $invalid_fields = SPP_Player_Profile::save($post_id, $meta_fields);
 
-            if (!empty($meta_fields['avatar_url'])) {
+            if (!empty($meta_fields['avatar_url']) && !in_array('avatar_url', $invalid_fields, true)) {
                 update_user_meta($user_id, 'spp_avatar_url', $meta_fields['avatar_url']);
             }
 
@@ -247,7 +245,13 @@ if (!class_exists('SPP_Dashboard')) {
             $completion = $this->calculate_profile_completion($profile);
 
             wp_send_json_success([
-                'message'    => __('Profile saved and submitted for review!', 'sports-player-platform'),
+                'message'    => $invalid_fields
+                    ? sprintf(
+                        /* translators: %s: comma-separated field names. */
+                        __('Profile submitted for review. Check the values that could not be saved: %s.', 'sports-player-platform'),
+                        implode(', ', array_column(array_intersect_key(SPP_Player_Profile::fields(), array_flip($invalid_fields)), 'label'))
+                    )
+                    : __('Profile saved and submitted for review!', 'sports-player-platform'),
                 'post_id'    => $post_id,
                 'completion' => $completion,
                 'status'     => 'spp_pending',
@@ -270,7 +274,7 @@ if (!class_exists('SPP_Dashboard')) {
                 : false;
 
             if (!$result) {
-                wp_send_json_error(['message' => __('No active membership found to cancel.', 'sports-player-platform')], 400);
+                wp_send_json_error(['message' => __('The subscription could not be cancelled. Please try again or contact support.', 'sports-player-platform')], 400);
             }
 
             wp_send_json_success(['message' => __('Your membership has been cancelled.', 'sports-player-platform')]);
@@ -358,17 +362,10 @@ if (!class_exists('SPP_Dashboard')) {
         }
 
         /**
-         * Get the player CPT post authored by the given user.
+         * Get the linked player profile or a legacy profile authored by the user.
          */
         private function get_user_player_post(int $user_id): ?WP_Post {
-            $posts = get_posts([
-                'post_type'      => 'player',
-                'author'         => $user_id,
-                'post_status'    => ['publish', 'spp_pending', 'draft', 'pending'],
-                'posts_per_page' => 1,
-            ]);
-
-            return !empty($posts) ? $posts[0] : null;
+            return SPP_Player_Profile::account_profile($user_id);
         }
 
         /**
@@ -391,7 +388,8 @@ if (!class_exists('SPP_Dashboard')) {
             ];
 
             foreach ($keys as $key) {
-                $data[$key] = $post_id ? (string) get_post_meta($post_id, $key, true) : '';
+                $value = $post_id ? SPP_Player_Profile::get($post_id, $key) : '';
+                $data[$key] = is_scalar($value) ? (string) $value : '';
             }
 
             if ($data['sport'] === '') {
@@ -436,7 +434,7 @@ if (!class_exists('SPP_Dashboard')) {
         private function login_required_notice(): string {
             return '<div class="spp-notice spp-notice-error"><p>' .
                 esc_html__('Please log in to access your dashboard.', 'sports-player-platform') .
-                ' <a href="' . esc_url(home_url('/login/')) . '">' . esc_html__('Log In', 'sports-player-platform') . '</a></p></div>';
+                ' <a href="' . esc_url(spp_page_url('login')) . '">' . esc_html__('Log In', 'sports-player-platform') . '</a></p></div>';
         }
 
         private function load_template(string $relative_path, array $vars = []): string {

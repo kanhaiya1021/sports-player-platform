@@ -18,6 +18,9 @@ $plan_status = $membership['status'] ?? 'active';
     <?php include SPP_PLUGIN_DIR . 'templates/dashboard/nav.php'; ?>
 
     <h2><?php esc_html_e('My Membership', 'sports-player-platform'); ?></h2>
+    <?php if (($_GET['spp_payment'] ?? '') === 'success' && ($plan_status !== 'active' || $plan_type === 'free')): ?>
+        <p><?php esc_html_e('Your membership will update when the payment provider confirms your payment.', 'sports-player-platform'); ?></p>
+    <?php endif; ?>
 
     <div id="spp-membership-feedback" class="spp-notice" style="display:none;"></div>
 
@@ -34,10 +37,10 @@ $plan_status = $membership['status'] ?? 'active';
         </div>
 
         <div class="spp-membership-actions">
-            <a href="<?php echo esc_url(home_url('/pricing/')); ?>" class="spp-btn spp-btn-primary">
+            <a href="<?php echo esc_url(spp_page_url('pricing')); ?>" class="spp-btn spp-btn-primary">
                 <?php echo $plan_type === 'free' ? esc_html__('Upgrade Plan', 'sports-player-platform') : esc_html__('Change Plan', 'sports-player-platform'); ?>
             </a>
-            <?php if ($plan_type !== 'free' && $plan_status === 'active'): ?>
+            <?php if ($plan_type !== 'free' && $plan_status !== 'cancelled'): ?>
                 <button type="button" id="spp-cancel-membership-btn" class="spp-btn spp-btn-danger">
                     <?php esc_html_e('Cancel Subscription', 'sports-player-platform'); ?>
                 </button>

@@ -99,10 +99,7 @@ if (!class_exists('SPP_Payment')) {
                     'interval'    => 'month',
                     'interval_label' => __('/ month', 'sports-player-platform'),
                     'features'    => [
-                        __('Full player contact information', 'sports-player-platform'),
-                        __('Up to 50 direct messages / month', 'sports-player-platform'),
-                        __('Up to 5 recruiting lists', 'sports-player-platform'),
-                        __('Shortlist & player notes', 'sports-player-platform'),
+                        __('Message inbox access for eligible accounts', 'sports-player-platform'),
                     ],
                 ],
                 'annual' => [
@@ -114,10 +111,7 @@ if (!class_exists('SPP_Payment')) {
                     'interval_label' => __('/ year', 'sports-player-platform'),
                     'popular'     => true,
                     'features'    => [
-                        __('Everything in Monthly Pro', 'sports-player-platform'),
-                        __('Unlimited direct messages', 'sports-player-platform'),
-                        __('Unlimited recruiting lists & CSV export', 'sports-player-platform'),
-                        __('Priority recruiting support', 'sports-player-platform'),
+                        __('Message inbox access for eligible accounts', 'sports-player-platform'),
                     ],
                 ],
             ];
@@ -137,6 +131,30 @@ if (!class_exists('SPP_Payment')) {
             return new SPP_Stripe();
         }
 
+        public static function matches_payment_plan(string $plan_id, float $amount, string $currency): bool {
+            $plan = self::get_plans()[$plan_id] ?? null;
+            return $plan && strtoupper($currency) === $plan['currency'] && $amount >= $plan['price'];
+        }
+
+        public static function checkout_enabled(): bool {
+            $settings = get_option('spp_settings', []);
+            if (empty($settings['spp_payments_enabled'])) {
+                return false;
+            }
+
+            $required = ($settings['spp_active_gateway'] ?? 'stripe') === 'paypal'
+                ? ['spp_paypal_client_id', 'spp_paypal_secret', 'spp_paypal_webhook_id', 'spp_paypal_monthly_plan_id', 'spp_paypal_annual_plan_id']
+                : ['spp_stripe_secret_key', 'spp_stripe_webhook_secret'];
+
+            foreach ($required as $key) {
+                if (empty($settings[$key])) {
+                    return false;
+                }
+            }
+
+            return !SPP_DB::get_instance()->needs_update();
+        }
+
         /**
          * AJAX: Create checkout session for selected plan.
          */
@@ -146,20 +164,29 @@ if (!class_exists('SPP_Payment')) {
             if (!is_user_logged_in()) {
                 wp_send_json_error([
                     'message'      => __('Please log in to upgrade your plan.', 'sports-player-platform'),
-                    'redirect_url' => home_url('/login/'),
+                    'redirect_url' => spp_page_url('login'),
                 ], 401);
             }
 
-            $plan_id = sanitize_key($_POST['plan'] ?? '');
+            if (!self::checkout_enabled()) {
+                wp_send_json_error(['message' => __('Paid checkout is currently unavailable.', 'sports-player-platform')], 503);
+            }
+
+            $plan_id = sanitize_key(wp_unslash($_POST['plan'] ?? ''));
             $plans   = self::get_plans();
 
             if (!isset($plans[$plan_id]) || $plan_id === 'free') {
                 wp_send_json_error(['message' => __('Invalid plan selected.', 'sports-player-platform')], 400);
             }
 
-            $gateway_name = sanitize_key($_POST['gateway'] ?? '');
-            $gateway      = $this->get_gateway($gateway_name ?: null);
-            $session_url  = $gateway->create_session($plans[$plan_id], get_current_user_id());
+            $user_id = get_current_user_id();
+            $membership = SPP_Membership::get_instance()->get_user_membership($user_id);
+            if ($membership && $membership['type'] !== 'free' && $membership['status'] !== 'cancelled'
+                && (!empty($membership['transaction_id']) || get_user_meta($user_id, 'spp_stripe_subscription_id', true))) {
+                wp_send_json_error(['message' => __('Cancel your existing subscription before starting a new one.', 'sports-player-platform')], 409);
+            }
+
+            $session_url = $this->get_gateway()->create_session($plans[$plan_id], $user_id);
 
             if (is_wp_error($session_url)) {
                 wp_send_json_error(['message' => $session_url->get_error_message()], 400);
@@ -178,22 +205,34 @@ if (!class_exists('SPP_Payment')) {
             float $amount,
             string $currency,
             string $status,
-            ?int $membership_id = null,
-            array $payload = []
-        ): void {
+            string $event_id
+        ): bool {
             global $wpdb;
 
             $table = $wpdb->prefix . 'spp_payment_logs';
-            $wpdb->insert($table, [
-                'user_id'        => $user_id,
-                'membership_id'  => $membership_id,
-                'gateway'        => sanitize_text_field($gateway),
-                'transaction_id' => sanitize_text_field($transaction_id),
-                'amount'         => $amount,
-                'currency'       => strtoupper(sanitize_text_field($currency)),
-                'status'         => sanitize_text_field($status),
-                'payload'        => !empty($payload) ? wp_json_encode($payload) : '',
-            ]);
+            $result = $wpdb->query($wpdb->prepare(
+                "INSERT INTO $table (user_id, gateway, transaction_id, amount, currency, status, event_id)
+                 VALUES (%d, %s, %s, %f, %s, %s, %s) ON DUPLICATE KEY UPDATE id = id",
+                $user_id,
+                $gateway,
+                $transaction_id,
+                $amount,
+                strtoupper($currency),
+                $status,
+                $event_id
+            ));
+
+            if ($result !== false && (int) $wpdb->rows_affected === 1) {
+                do_action('spp_payment_logged', $user_id, $gateway, $transaction_id, $amount, strtoupper($currency), $status);
+            }
+
+            return $result !== false;
+        }
+
+        public static function webhook_response(bool $saved = true): WP_REST_Response {
+            return $saved
+                ? new WP_REST_Response(['received' => true], 200)
+                : new WP_REST_Response(['error' => 'Payment event could not be processed'], 503);
         }
     }
 }

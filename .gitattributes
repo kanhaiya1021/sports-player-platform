@@ -1,0 +1,8 @@
+/sports-player-platform.php text eol=lf
+/uninstall.php text eol=lf
+/includes/functions.php text eol=lf
+/includes/database/*.php text eol=lf
+/includes/auth/*.php text eol=lf
+/modules/core/class-spp-*.php text eol=lf
+/templates/auth/*.php text eol=lf
+/phpcs.xml.dist text eol=lf

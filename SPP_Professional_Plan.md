@@ -1,5 +1,7 @@
 # 🏆 Sports Player Platform — Professional Build Plan
 
+Current code status, test results, and remaining work are tracked in [Implementation Audit](IMPLEMENTATION_AUDIT.md).
+
 > [!IMPORTANT]
 > Yeh plan existing codebase ke upar build karta hai. Jo kuch already bana hua hai usse refactor kiya jayega, naya code uss pattern ko follow karega.
 
@@ -250,7 +252,7 @@ if (!spp_user_has_membership($user_id, 'paid')) → /pricing/ pe redirect
 | `/dashboard/membership/` | `[spp_my_membership]` | All logged-in |
 | `/dashboard/messages/` | `[spp_messages]` | Paid members |
 | `/dashboard/shortlist/` | `[spp_shortlist]` | Coach/Parent |
-| `/dashboard/recruiting/` | `[spp_recruiting]` | Coach only |
+| `/dashboard/recruiting/` | `[spp_recruiting_lists]` | Coach recruiting lists |
 
 #### 3.2 — Dashboard Home Widget
 - Welcome message + user avatar
@@ -302,21 +304,21 @@ interface SPP_Payment_Gateway {
 - Settings mein admin choose kare konsa gateway active hai
 
 #### 4.3 — Stripe Integration
-- Stripe PHP SDK (Composer se)
+- WordPress HTTP API se hosted Stripe Checkout create karo.
 - Checkout flow:
   1. User "Upgrade" button click kare
-  2. `stripe\checkout\Session::create()` se session bane
+  2. Stripe Checkout Sessions API se session bane
   3. User Stripe hosted page pe jaaye
   4. Payment complete pe webhook fire ho → `spp/v1/stripe-webhook`
   5. Webhook handler:
-     - `checkout.session.completed` → membership activate karo
+     - `invoice.paid` → membership activate ya renew karo
      - `invoice.payment_failed` → membership pause karo
      - `customer.subscription.deleted` → membership cancel karo
-- Webhook signature verify karo (`Stripe::constructEvent()`)
+- Webhook ka timestamp aur signature verify karo.
 
 #### 4.4 — PayPal Integration
-- PayPal REST API (IPN ya Webhooks)
-- Same flow as Stripe via abstraction layer
+- PayPal Subscriptions API par monthly aur annual recurring plans configure karo.
+- Provider se webhook verify karo. `PAYMENT.SALE.COMPLETED` se membership activate ya renew karo.
 
 #### 4.5 — Pricing Page
 - `[spp_pricing_table]` shortcode
@@ -676,7 +678,7 @@ Plugin activate hone pe automatically yeh pages banen (activation hook mein):
 | Membership | `/dashboard/membership/` | `[spp_my_membership]` |
 | Messages | `/dashboard/messages/` | `[spp_messages]` |
 | Shortlist | `/dashboard/shortlist/` | `[spp_shortlist]` |
-| Recruiting | `/dashboard/recruiting/` | `[spp_recruiting]` |
+| Recruiting | `/dashboard/recruiting/` | `[spp_recruiting_lists]` |
 | Pricing | `/pricing/` | `[spp_pricing_table]` |
 | Email Verify | `/verify-email/` | (handled by template_redirect) |
 

@@ -231,3 +231,30 @@
 .spp-notice-success { border-color: #10b981; background: #ecfdf5; color: #065f46; }
 .spp-notice-error { border-color: #ef4444; background: #fef2f2; color: #991b1b; }
 .spp-notice-info { border-color: #3b82f6; background: #eff6ff; color: #1e40af; }
+
+.spp-btn:disabled,
+.spp-btn.is-loading {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+    .spp-dashboard-wrap {
+        margin: 12px auto;
+        padding: 14px;
+    }
+
+    .spp-nav-logout {
+        margin-left: 0;
+    }
+
+    .spp-progress-bar {
+        width: 100%;
+    }
+
+    .spp-table {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+    }
+}

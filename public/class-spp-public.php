@@ -19,129 +19,9 @@ if (!class_exists('SPP_Public')) {
         private static $instance = null;
 
         /**
-         * Post types with player profile field definitions
+         * Post type definitions
          */
-        const POST_TYPES = [
-            'player' => [
-                'label' => 'Player',
-                'labels' => [
-                    'name' => 'Players',
-                    'singular_name' => 'Player',
-                    'menu_name' => 'Players',
-                    'all_items' => 'All Players',
-                    'add_new' => 'Add New',
-                    'add_new_item' => 'Add New Player',
-                    'edit_item' => 'Edit Player',
-                    'new_item' => 'New Player',
-                    'view_item' => 'View Player',
-                    'search_items' => 'Search Players',
-                ],
-                'public' => true,
-                'show_ui' => true,
-                'show_in_menu' => false,
-                'supports' => ['title', 'editor', 'thumbnail', 'excerpt', 'custom-fields'],
-                'has_archive' => true,
-                'rewrite' => ['slug' => 'players'],
-                'meta_fields' => [
-                    'date_of_birth' => [
-                        'label' => 'Date of Birth',
-                        'type' => 'date',
-                        'description' => 'Player date of birth (kept private by default)',
-                        'public' => false,
-                    ],
-                    'location' => [
-                        'label' => 'Location',
-                        'type' => 'text',
-                        'description' => 'Player hometown or current location',
-                        'public' => true,
-                    ],
-                    'graduation_year' => [
-                        'label' => 'Graduation Year',
-                        'type' => 'number',
-                        'description' => 'Year of graduation',
-                        'public' => true,
-                        'min' => 1900,
-                        'max' => 2030,
-                    ],
-                    'school' => [
-                        'label' => 'School',
-                        'type' => 'text',
-                        'description' => 'High school or college attended',
-                        'public' => true,
-                    ],
-                    'sport' => [
-                        'label' => 'Sport',
-                        'type' => 'text',
-                        'description' => 'Primary sport',
-                        'public' => true,
-                    ],
-                    'playing_position' => [
-                        'label' => 'Playing Position',
-                        'type' => 'select',
-                        'options' => ['Goalkeeper', 'Defender', 'Midfielder', 'Forward'],
-                        'description' => 'Primary playing position',
-                        'public' => true,
-                    ],
-                    'height' => [
-                        'label' => 'Height',
-                        'type' => 'text',
-                        'description' => 'Height in centimeters',
-                        'public' => true,
-                    ],
-                    'weight' => [
-                        'label' => 'Weight',
-                        'type' => 'text',
-                        'description' => 'Weight in kilograms',
-                        'public' => true,
-                    ],
-                    'image_gallery' => [
-                        'label' => 'Photo Gallery',
-                        'type' => 'textarea',
-                        'description' => 'Comma-separated image URLs',
-                        'public' => true,
-                    ],
-                    'videos_highlights' => [
-                        'label' => 'Videos/Highlight Links',
-                        'type' => 'textarea',
-                        'description' => 'Comma-separated video/highlight URLs',
-                        'public' => true,
-                    ],
-                    'social_media' => [
-                        'label' => 'Social Media Links',
-                        'type' => 'textarea',
-                        'description' => 'Comma-separated social media profile URLs',
-                        'public' => true,
-                    ],
-                    'recruiting_info' => [
-                        'label' => 'Recruiting Information',
-                        'type' => 'textarea',
-                        'description' => 'Recruiting-related information',
-                        'public' => false,
-                    ],
-                ],
-            ],
-            'team' => [
-                'label' => 'Team',
-                'labels' => [
-                    'name' => 'Teams',
-                    'singular_name' => 'Team',
-                    'menu_name' => 'Teams',
-                    'all_items' => 'All Teams',
-                    'add_new' => 'Add New',
-                    'add_new_item' => 'Add New Team',
-                    'edit_item' => 'Edit Team',
-                    'new_item' => 'New Team',
-                    'view_item' => 'View Team',
-                    'search_items' => 'Search Teams',
-                ],
-                'public' => true,
-                'show_ui' => true,
-                'show_in_menu' => false,
-                'supports' => ['title', 'editor', 'thumbnail', 'excerpt', 'custom-fields'],
-                'has_archive' => true,
-                'rewrite' => ['slug' => 'teams'],
-            ],
-        ];
+        const POST_TYPES = SPP_Content_Types::POST_TYPES;
 
         /**
          * Get public instance
@@ -166,11 +46,7 @@ if (!class_exists('SPP_Public')) {
          * Initialize WordPress hooks
          */
         private function init_hooks(): void {
-            // Register post types immediately to ensure they're available in admin
-            $this->register_post_types();
-
-            // Register post status on init hook (must be after WordPress core loads)
-            add_action('init', [$this, 'register_post_status'], 10);
+            // Content types are registered by the plugin lifecycle.
 
             // Register approval/rejection actions
             add_action('admin_post_spp_approve_profile', [$this, 'handle_approve_profile']);
@@ -181,38 +57,24 @@ if (!class_exists('SPP_Public')) {
             add_shortcode('spp_rankings', [$this, 'render_rankings_shortcode']);
             add_shortcode('spp_teams', [$this, 'render_teams_shortcode']);
             add_shortcode('spp_events', [$this, 'render_events_embed']);
-            add_shortcode('spp_articles', [$this, 'render_articles_list']);
+            add_shortcode('spp_articles', function ($atts): string {
+                $atts = (array) $atts;
+                return $this->render_articles_list(max(1, min(100, (int) ($atts['limit'] ?? 10))));
+            });
             add_filter('query_vars', [$this, 'add_query_vars']);
             add_action('template_redirect', [$this, 'template_redirect']);
+            add_filter('template_include', [$this, 'load_custom_templates']);
+            add_action('wp_ajax_spp_filter_players', [$this, 'ajax_filter_players']);
+            add_action('wp_ajax_nopriv_spp_filter_players', [$this, 'ajax_filter_players']);
         }
 
         /**
          * Register custom post status
          */
         public function register_post_status(): void {
-            register_post_status('spp_pending', [
-                'label' => __('Pending Review', 'sports-player-platform'),
-                'public' => false,
-                'internal' => true,
-                'label_count' => __('Pending', 'sports-player-platform'),
-            ]);
+            SPP_Content_Types::register_statuses();
         }
 
-        /**
-         * Initialize on init hook for any remaining init-dependent functionality
-         */
-        public function init(): void {
-            // This method exists for any future init-dependent functionality
-        }
-
-        /**
-         * Register custom post types
-         */
-        private function register_post_types(): void {
-            foreach (self::POST_TYPES as $post_type => $args) {
-                register_post_type($post_type, $args);
-            }
-        }
 
         /**
          * Enqueue public-facing scripts
@@ -272,58 +134,53 @@ if (!class_exists('SPP_Public')) {
          * Handle profile approval
          */
         public function handle_approve_profile(): void {
-            check_ajax_referer('spp_ajax_nonce', 'nonce');
-
-            if (!current_user_can('edit_posts')) {
-                wp_die(__('Unauthorized', 'sports-player-platform'));
-            }
-
-            $profile_id = isset($_POST['profile_id']) ? absint($_POST['profile_id']) : 0;
-
-            if ($profile_id > 0) {
-                $post = get_post($profile_id);
-
-                if ($post && $post->post_type === 'player') {
-                    wp_update_post([
-                        'ID' => $profile_id,
-                        'post_status' => 'publish',
-                    ]);
-
-                    do_action('spp_profile_approved', $profile_id);
-                }
-            }
-
-            wp_redirect(admin_url('edit.php?post_type=player&spp_status=approved'));
-            wp_die();
+            $this->handle_profile_review('publish');
         }
 
         /**
          * Handle profile rejection
          */
         public function handle_reject_profile(): void {
-            check_ajax_referer('spp_ajax_nonce', 'nonce');
+            $this->handle_profile_review('rejected');
+        }
 
-            if (!current_user_can('edit_posts')) {
-                wp_die(__('Unauthorized', 'sports-player-platform'));
+        private function handle_profile_review(string $status): void {
+            check_admin_referer('spp_ajax_nonce', 'nonce');
+            $result = $this->review_player_profile(absint($_POST['profile_id'] ?? 0), $status);
+            if (is_wp_error($result)) {
+                wp_die(esc_html($result->get_error_message()), '', ['response' => $result->get_error_data()]);
             }
 
-            $profile_id = isset($_POST['profile_id']) ? absint($_POST['profile_id']) : 0;
+            wp_safe_redirect(admin_url('admin.php?page=spp-profile-management&spp_status=' . $result));
+            exit;
+        }
 
-            if ($profile_id > 0) {
-                $post = get_post($profile_id);
-
-                if ($post && $post->post_type === 'player') {
-                    wp_update_post([
-                        'ID' => $profile_id,
-                        'post_status' => 'rejected',
-                    ]);
-
-                    do_action('spp_profile_rejected', $profile_id);
-                }
+        public function review_player_profile(int $profile_id, string $status): string|WP_Error {
+            if (!in_array($status, ['publish', 'rejected'], true)) {
+                return new WP_Error('spp_invalid_status', __('Invalid profile status.', 'sports-player-platform'), 400);
             }
 
-            wp_redirect(admin_url('edit.php?post_type=player&spp_status=rejected'));
-            wp_die();
+            $post = $profile_id > 0 ? get_post($profile_id) : null;
+            if (!$post || $post->post_type !== 'player') {
+                return new WP_Error('spp_profile_not_found', __('Player profile not found.', 'sports-player-platform'), 404);
+            }
+
+            if (!current_user_can('publish_posts') || !current_user_can('edit_post', $profile_id)) {
+                return new WP_Error('spp_review_forbidden', __('You cannot review this profile.', 'sports-player-platform'), 403);
+            }
+
+            if ($post->post_status !== 'spp_pending') {
+                return new WP_Error('spp_profile_not_pending', __('This profile is no longer pending review.', 'sports-player-platform'), 409);
+            }
+
+            $updated = wp_update_post(['ID' => $profile_id, 'post_status' => $status], true);
+            if (is_wp_error($updated) || !$updated) {
+                return new WP_Error('spp_review_failed', __('Could not update the profile.', 'sports-player-platform'), 500);
+            }
+
+            $outcome = $status === 'publish' ? 'approved' : 'rejected';
+            do_action('spp_profile_' . $outcome, $profile_id);
+            return $outcome;
         }
 
         /**
@@ -375,7 +232,7 @@ if (!class_exists('SPP_Public')) {
          * @param array $atts Shortcode attributes
          * @return string
          */
-        public function render_rankings_shortcode(array $atts = []): string {
+        public function render_rankings_shortcode($atts = []): string {
             $atts = shortcode_atts([
                 'category' => '',
                 'limit' => 50,
@@ -384,12 +241,14 @@ if (!class_exists('SPP_Public')) {
 
             global $wpdb;
 
-            // Get active ranking categories
-            $categories = $wpdb->get_results(
-                $wpdb->prepare(
+            // Get active ranking categories (cached for 15 minutes).
+            $categories = get_transient('spp_ranking_categories_active');
+            if ($categories === false) {
+                $categories = $wpdb->get_results(
                     "SELECT * FROM {$wpdb->prefix}spp_ranking_categories WHERE is_active = 1 ORDER BY name ASC"
-                )
-            );
+                );
+                set_transient('spp_ranking_categories_active', $categories, 15 * MINUTE_IN_SECONDS);
+            }
 
             $output = '<div class="spp-rankings-display">';
 
@@ -421,16 +280,23 @@ if (!class_exists('SPP_Public')) {
                 if ($category) {
                     $output .= '<h2 class="spp-rankings-title">' . esc_html(__('Rankings for', 'sports-player-platform')) . ' ' . esc_html($category->name) . '</h2>';
 
-                    // Get rankings with player info
-                    $ranked_players = $wpdb->get_results($wpdb->prepare("
-                        SELECT r.*, p.post_title as player_name, p.guid as player_guid
-                        FROM {$wpdb->prefix}spp_rankings r
-                        JOIN {$wpdb->posts} p ON r.player_id = p.ID
-                        WHERE r.ranking_category_id = %d
-                          AND p.post_status = 'publish'
-                        ORDER BY r.ranking_position ASC
-                        LIMIT %d
-                    ", $category_id, $atts['limit']));
+                    // Get rankings with player info (cached via versioned transient).
+                    $limit = absint($atts['limit']);
+                    $cache_ver = (int) get_option('spp_rankings_cache_version', 1);
+                    $cache_key = 'spp_rankings_' . $cache_ver . '_' . $category_id . '_' . $limit;
+                    $ranked_players = get_transient($cache_key);
+                    if ($ranked_players === false) {
+                        $ranked_players = $wpdb->get_results($wpdb->prepare("
+                            SELECT r.*, p.post_title as player_name, p.guid as player_guid
+                            FROM {$wpdb->prefix}spp_rankings r
+                            JOIN {$wpdb->posts} p ON r.player_id = p.ID
+                            WHERE r.ranking_category_id = %d
+                              AND p.post_status = 'publish'
+                            ORDER BY r.ranking_position ASC
+                            LIMIT %d
+                        ", $category_id, $limit));
+                        set_transient($cache_key, $ranked_players, 15 * MINUTE_IN_SECONDS);
+                    }
 
                     if (!empty($ranked_players)) {
                         $output .= '<table class="spp-rankings-table">';
@@ -446,7 +312,7 @@ if (!class_exists('SPP_Public')) {
 
                         foreach ($ranked_players as $ranking) {
                             // Get player position and graduation year from post meta
-                            $position = get_post_meta($ranking->player_id, 'playing_position', true);
+                            $position = SPP_Player_Profile::get($ranking->player_id, 'playing_position');
                             $grad_year = get_post_meta($ranking->player_id, 'graduation_year', true);
                             $school = get_post_meta($ranking->player_id, 'school', true);
 
@@ -501,7 +367,7 @@ if (!class_exists('SPP_Public')) {
          * @param array $atts
          * @return string
          */
-        public function render_players_shortcode(array $atts = []): string {
+        public function render_players_shortcode($atts = []): string {
             $atts = shortcode_atts([
                 'sport' => '',
                 'limit' => 10,
@@ -514,6 +380,7 @@ if (!class_exists('SPP_Public')) {
             $args = [
                 'post_type' => 'player',
                 'post_status' => 'publish',
+                'has_password' => false,
                 'posts_per_page' => $atts['limit'],
             ];
 
@@ -529,6 +396,7 @@ if (!class_exists('SPP_Public')) {
 
             $query = new WP_Query($args);
             $output = '';
+            $can_save = current_user_can('view_saved_players') || current_user_can('manage_options');
 
             if ($query->have_posts()) {
                 $output = '<div class="spp-players-grid spp-columns-' . intval($atts['columns']) . '">';
@@ -537,18 +405,20 @@ if (!class_exists('SPP_Public')) {
                     $query->the_post();
                     $player_id = get_the_ID();
 
-                    $height = get_post_meta($player_id, 'player_height', true);
-                    $weight = get_post_meta($player_id, 'player_weight', true);
-                    $position = get_post_meta($player_id, 'playing_position', true);
-                    $jersey = get_post_meta($player_id, 'player_jersey', true);
+                    $height = SPP_Player_Profile::get($player_id, 'height');
+                    $position = SPP_Player_Profile::get($player_id, 'playing_position');
                     $sport = get_post_meta($player_id, 'sport', true);
-                    $grad_year = get_post_meta($player_id, 'graduation_year', true);
 
                     $output .= '<div class="spp-player-card">';
                     if (has_post_thumbnail()) {
-                        $output .= get_the_post_thumbnail(null, 'medium', [], ['class' => 'spp-player-thumb']);
+                        $output .= get_the_post_thumbnail($player_id, 'medium', ['class' => 'spp-player-thumb']);
+                    } else {
+                        $photo = esc_url(SPP_Player_Profile::get($player_id, 'avatar_url'), ['http', 'https']);
+                        if ($photo !== '') {
+                            $output .= '<img class="spp-player-thumb" src="' . $photo . '" alt="" loading="lazy" referrerpolicy="no-referrer">';
+                        }
                     }
-                    $output .= '<h3>' . esc_html(get_the_title()) . '</h3>';
+                    $output .= '<h3><a href="' . esc_url(get_permalink($player_id)) . '">' . esc_html(get_the_title()) . '</a></h3>';
                     if (!empty($sport)) {
                         $output .= '<p class="spp-sport">' . esc_html($sport) . '</p>';
                     }
@@ -557,6 +427,13 @@ if (!class_exists('SPP_Public')) {
                     }
                     if (!empty($height)) {
                         $output .= '<p class="spp-height">' . esc_html($height) . 'cm</p>';
+                    }
+                    if ($can_save) {
+                        $output .= '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">'
+                            . '<input type="hidden" name="action" value="spp_save_player">'
+                            . '<input type="hidden" name="player_id" value="' . esc_attr($player_id) . '">'
+                            . wp_nonce_field('spp_save_player_' . $player_id, '_wpnonce', false, false)
+                            . '<button type="submit" class="button">' . esc_html__('Save to Shortlist', 'sports-player-platform') . '</button></form>';
                     }
                     $output .= '</div>';
                 }
@@ -576,7 +453,7 @@ if (!class_exists('SPP_Public')) {
          * @param array $atts
          * @return string
          */
-        public function render_teams_shortcode(array $atts = []): string {
+        public function render_teams_shortcode($atts = []): string {
             $atts = shortcode_atts([
                 'sport' => '',
                 'limit' => 10,
@@ -637,8 +514,8 @@ if (!class_exists('SPP_Public')) {
          * @return string
          */
         public function render_events_embed(): string {
-            $provider_url = get_option('spp_events_provider_url', '');
-            $api_key = get_option('spp_events_api_key', '');
+            $settings = get_option('spp_settings', []);
+            $provider_url = $settings['spp_events_provider_url'] ?? get_option('spp_events_provider_url', '');
 
             if (empty($provider_url)) {
                 return '<p>' . __('Events integration not configured. Please contact administrator.', 'sports-player-platform') . '</p>';
@@ -750,8 +627,8 @@ if (!class_exists('SPP_Public')) {
                     $query->the_post();
                     $player_id = get_the_ID();
 
-                    $height = get_post_meta($player_id, 'player_height', true);
-                    $position = get_post_meta($player_id, 'playing_position', true);
+                    $height = SPP_Player_Profile::get($player_id, 'height');
+                    $position = SPP_Player_Profile::get($player_id, 'playing_position');
                     $grad_year = get_post_meta($player_id, 'graduation_year', true);
                     $sport = get_post_meta($player_id, 'sport', true);
 
@@ -794,83 +671,157 @@ if (!class_exists('SPP_Public')) {
         public function save_player_meta(int $player_id, array $meta): bool|WP_Error {
             check_ajax_referer('spp_ajax_nonce', 'nonce');
 
-            if (!current_user_can('edit_posts')) {
+            if (get_post_type($player_id) !== 'player' || !current_user_can('edit_post', $player_id)) {
                 return new WP_Error('unauthorized', __('Unauthorized', 'sports-player-platform'));
             }
 
-            // Date of birth - kept private
-            if (isset($meta['date_of_birth'])) {
-                $value = isset($meta['date_of_birth']) ? sanitize_text_field($meta['date_of_birth']) : '';
-                update_post_meta($player_id, 'date_of_birth', $value);
-            }
-
-            // Location - public
-            if (isset($meta['location'])) {
-                $value = isset($meta['location']) ? sanitize_text_field($meta['location']) : '';
-                update_post_meta($player_id, 'location', $value);
-            }
-
-            // Graduation year - public
-            if (isset($meta['graduation_year'])) {
-                $value = isset($meta['graduation_year']) ? absint($meta['graduation_year']) : 0;
-                update_post_meta($player_id, 'graduation_year', $value);
-            }
-
-            // School - public
-            if (isset($meta['school'])) {
-                $value = isset($meta['school']) ? sanitize_text_field($meta['school']) : '';
-                update_post_meta($player_id, 'school', $value);
-            }
-
-            // Sport - public
-            if (isset($meta['sport'])) {
-                $value = isset($meta['sport']) ? sanitize_text_field($meta['sport']) : '';
-                update_post_meta($player_id, 'sport', $value);
-            }
-
-            // Playing position - public
-            if (isset($meta['playing_position'])) {
-                $value = isset($meta['playing_position']) ? sanitize_text_field($meta['playing_position']) : 'Midfielder';
-                update_post_meta($player_id, 'playing_position', $value);
-            }
-
-            // Height - public
-            if (isset($meta['height'])) {
-                $value = isset($meta['height']) ? sanitize_text_field($meta['height']) : '';
-                update_post_meta($player_id, 'height', $value);
-            }
-
-            // Weight - public
-            if (isset($meta['weight'])) {
-                $value = isset($meta['weight']) ? sanitize_text_field($meta['weight']) : '';
-                update_post_meta($player_id, 'weight', $value);
-            }
-
-            // Image gallery - public
-            if (isset($meta['image_gallery'])) {
-                $value = isset($meta['image_gallery']) ? esc_attr__($meta['image_gallery']) : '';
-                update_post_meta($player_id, 'image_gallery', $value);
-            }
-
-            // Videos/Highlights - public
-            if (isset($meta['videos_highlights'])) {
-                $value = isset($meta['videos_highlights']) ? esc_attr__($meta['videos_highlights']) : '';
-                update_post_meta($player_id, 'videos_highlights', $value);
-            }
-
-            // Social media - public
-            if (isset($meta['social_media'])) {
-                $value = isset($meta['social_media']) ? esc_attr__($meta['social_media']) : '';
-                update_post_meta($player_id, 'social_media', $value);
-            }
-
-            // Recruiting info - kept private by default
-            if (isset($meta['recruiting_info'])) {
-                $value = isset($meta['recruiting_info']) ? sanitize_textarea_field($meta['recruiting_info']) : '';
-                update_post_meta($player_id, 'recruiting_info', $value);
+            $invalid = SPP_Player_Profile::save($player_id, $meta);
+            if ($invalid) {
+                return new WP_Error('spp_invalid_player_fields', __('Some player details were invalid.', 'sports-player-platform'), $invalid);
             }
 
             return true;
+        }
+
+        /**
+         * Load plugin templates for player/team singles and archives when theme doesn't override.
+         */
+        public function load_custom_templates(string $template): string {
+            if (is_singular('player')) {
+                $custom = SPP_PLUGIN_DIR . 'templates/player/single-player.php';
+                return file_exists($custom) ? $custom : $template;
+            }
+            if (is_post_type_archive('player')) {
+                $custom = SPP_PLUGIN_DIR . 'templates/player/archive-player.php';
+                return file_exists($custom) ? $custom : $template;
+            }
+            if (is_singular('team')) {
+                $custom = SPP_PLUGIN_DIR . 'templates/team/single-team.php';
+                return file_exists($custom) ? $custom : $template;
+            }
+            if (is_post_type_archive('team')) {
+                $custom = SPP_PLUGIN_DIR . 'templates/team/archive-team.php';
+                return file_exists($custom) ? $custom : $template;
+            }
+
+            return $template;
+        }
+
+        /**
+         * Track a player profile view in spp_player_views.
+         */
+        public function track_player_view(int $player_id): void {
+            global $wpdb;
+
+            $viewer_id = get_current_user_id();
+            $author_id = (int) get_post_field('post_author', $player_id);
+            if ($viewer_id && $viewer_id === $author_id) {
+                return; // Don't count self-views
+            }
+
+            $ip = sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'] ?? ''));
+            $transient_key = 'spp_view_' . $player_id . '_' . md5($viewer_id . '|' . $ip);
+            if (get_transient($transient_key)) {
+                return;
+            }
+            set_transient($transient_key, 1, HOUR_IN_SECONDS);
+
+            $role = function_exists('spp_get_current_user_role') ? (spp_get_current_user_role() ?? 'guest') : 'guest';
+
+            $wpdb->insert($wpdb->prefix . 'spp_player_views', [
+                'player_id'   => $player_id,
+                'viewer_id'   => $viewer_id ?: null,
+                'viewer_role' => $role,
+                'ip_address'  => $ip,
+            ]);
+        }
+
+        /**
+         * AJAX handler for the player directory filter sidebar.
+         */
+        public function ajax_filter_players(): void {
+            check_ajax_referer('spp_public_nonce', 'nonce');
+
+            $search     = sanitize_text_field(wp_unslash($_POST['search'] ?? ''));
+            $sport      = sanitize_text_field(wp_unslash($_POST['sport'] ?? ''));
+            $position   = sanitize_text_field(wp_unslash($_POST['position'] ?? ''));
+            $location   = sanitize_text_field(wp_unslash($_POST['location'] ?? ''));
+            $grad_min   = absint($_POST['grad_min'] ?? 0);
+            $grad_max   = absint($_POST['grad_max'] ?? 0);
+            $height_min = absint($_POST['height_min'] ?? 0);
+            $height_max = absint($_POST['height_max'] ?? 0);
+            $orderby    = sanitize_key($_POST['orderby'] ?? 'recent');
+            $paged      = max(1, absint($_POST['paged'] ?? 1));
+
+            $args = [
+                'post_type'      => 'player',
+                'post_status'    => 'publish',
+                'posts_per_page' => 12,
+                'paged'          => $paged,
+            ];
+
+            if ($search !== '') {
+                $args['s'] = $search;
+            }
+
+            if ($orderby === 'name') {
+                $args['orderby'] = 'title';
+                $args['order']   = 'ASC';
+            } elseif ($orderby === 'grad_year') {
+                $args['meta_key'] = 'graduation_year';
+                $args['orderby']  = 'meta_value_num';
+                $args['order']    = 'ASC';
+            } else {
+                $args['orderby'] = 'date';
+                $args['order']   = 'DESC';
+            }
+
+            $meta_query = [];
+            if ($sport !== '') {
+                $meta_query[] = ['key' => 'sport', 'value' => $sport, 'compare' => '='];
+            }
+            if ($position !== '') {
+                $meta_query[] = ['key' => 'playing_position', 'value' => $position, 'compare' => '='];
+            }
+            if ($location !== '') {
+                $meta_query[] = ['key' => 'location', 'value' => $location, 'compare' => 'LIKE'];
+            }
+            if ($grad_min > 0 && $grad_max > 0) {
+                $meta_query[] = ['key' => 'graduation_year', 'value' => [$grad_min, $grad_max], 'type' => 'NUMERIC', 'compare' => 'BETWEEN'];
+            } elseif ($grad_min > 0) {
+                $meta_query[] = ['key' => 'graduation_year', 'value' => $grad_min, 'type' => 'NUMERIC', 'compare' => '>='];
+            } elseif ($grad_max > 0) {
+                $meta_query[] = ['key' => 'graduation_year', 'value' => $grad_max, 'type' => 'NUMERIC', 'compare' => '<='];
+            }
+            if ($height_min > 0 && $height_max > 0) {
+                $meta_query[] = ['key' => 'height', 'value' => [$height_min, $height_max], 'type' => 'NUMERIC', 'compare' => 'BETWEEN'];
+            }
+
+            if (!empty($meta_query)) {
+                $meta_query['relation'] = 'AND';
+                $args['meta_query']     = $meta_query;
+            }
+
+            $query = new WP_Query($args);
+            ob_start();
+            if ($query->have_posts()) {
+                while ($query->have_posts()) {
+                    $query->the_post();
+                    $player_id = get_the_ID();
+                    include SPP_PLUGIN_DIR . 'templates/player/player-card.php';
+                }
+                wp_reset_postdata();
+            } else {
+                echo '<p>' . esc_html__('No players match your filters.', 'sports-player-platform') . '</p>';
+            }
+            $html = (string) ob_get_clean();
+
+            wp_send_json_success([
+                'html'  => $html,
+                'found' => (int) $query->found_posts,
+                'pages' => (int) $query->max_num_pages,
+                'paged' => $paged,
+            ]);
         }
     }
 }

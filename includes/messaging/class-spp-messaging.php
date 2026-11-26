@@ -1,6 +1,9 @@
 <?php
 /**
  * Messaging System Class
+ *
+ * Handles coach-player conversations, monthly plan limits,
+ * REST API endpoints, AJAX polling, and in-app/email notifications.
  */
 
 if (!defined('ABSPATH')) {
@@ -15,6 +18,7 @@ if (!class_exists('SPP_Messaging')) {
 
         const STATUS_SENT = 'sent';
         const STATUS_READ = 'read';
+        const MONTHLY_PLAN_LIMIT = 50;
 
         public static function get_instance(): self {
             if (null === self::$instance) {
@@ -30,6 +34,13 @@ if (!class_exists('SPP_Messaging')) {
         private function init_hooks(): void {
             add_shortcode('spp_messages', [$this, 'render_messages_page']);
             add_shortcode('spp_message_form', [$this, 'render_message_form']);
+
+            add_action('wp_enqueue_scripts', [$this, 'enqueue_assets']);
+            add_action('rest_api_init', [$this, 'register_rest_routes']);
+
+            add_action('wp_ajax_spp_send_message', [$this, 'ajax_send_message']);
+            add_action('wp_ajax_spp_fetch_messages', [$this, 'ajax_fetch_messages']);
+            add_action('wp_ajax_spp_mark_notifications_read', [$this, 'ajax_mark_notifications_read']);
         }
 
         public function create_messaging_tables(): void {
@@ -38,80 +49,313 @@ if (!class_exists('SPP_Messaging')) {
             }
         }
 
+        /**
+         * Enqueue messaging CSS/JS on messages page.
+         */
+        public function enqueue_assets(): void {
+            if (!is_user_logged_in()) {
+                return;
+            }
+
+            $request_path = trim((string) parse_url(add_query_arg([]), PHP_URL_PATH), '/');
+            global $post;
+            $has_shortcode = ($post instanceof WP_Post) && (
+                has_shortcode($post->post_content, 'spp_messages') ||
+                has_shortcode($post->post_content, 'spp_message_form')
+            );
+
+            if ($request_path !== 'dashboard/messages' && !$has_shortcode && strpos($request_path, 'dashboard') !== 0) {
+                return;
+            }
+
+            wp_enqueue_style('spp-dashboard', SPP_PLUGIN_URL . 'assets/css/dashboard.css', [], SPP_VERSION);
+            wp_enqueue_style('spp-messaging', SPP_PLUGIN_URL . 'assets/css/messaging.css', ['spp-dashboard'], SPP_VERSION);
+            wp_enqueue_script('spp-messaging', SPP_PLUGIN_URL . 'assets/js/messaging.js', [], SPP_VERSION, true);
+
+            wp_localize_script('spp-messaging', 'sppMessaging', [
+                'ajaxUrl'       => admin_url('admin-ajax.php'),
+                'nonce'         => wp_create_nonce('spp_messaging_nonce'),
+                'currentUserId' => get_current_user_id(),
+                'pollInterval'  => 5000,
+                'i18n'          => [
+                    'sending' => __('Sending...', 'sports-player-platform'),
+                    'send'    => __('Send Message', 'sports-player-platform'),
+                    'error'   => __('Unable to send message.', 'sports-player-platform'),
+                ],
+            ]);
+        }
+
+        /**
+         * Register REST API routes for messaging & notifications.
+         */
+        public function register_rest_routes(): void {
+            register_rest_route('spp/v1', '/messages', [
+                [
+                    'methods'             => 'GET',
+                    'callback'            => [$this, 'rest_get_conversations'],
+                    'permission_callback' => [$this, 'rest_permission_check'],
+                ],
+                [
+                    'methods'             => 'POST',
+                    'callback'            => [$this, 'rest_send_message'],
+                    'permission_callback' => [$this, 'rest_permission_check'],
+                ],
+            ]);
+
+            register_rest_route('spp/v1', '/messages/(?P<id>\d+)', [
+                'methods'             => 'GET',
+                'callback'            => [$this, 'rest_get_thread'],
+                'permission_callback' => [$this, 'rest_permission_check'],
+            ]);
+
+            register_rest_route('spp/v1', '/notifications', [
+                'methods'             => 'GET',
+                'callback'            => [$this, 'rest_get_notifications'],
+                'permission_callback' => static fn(): bool => is_user_logged_in(),
+            ]);
+
+            register_rest_route('spp/v1', '/notifications/read', [
+                'methods'             => 'POST',
+                'callback'            => [$this, 'rest_mark_notifications_read'],
+                'permission_callback' => static fn(): bool => is_user_logged_in(),
+            ]);
+        }
+
+        public function rest_permission_check(): bool {
+            if (!is_user_logged_in()) {
+                return false;
+            }
+            $user_id = get_current_user_id();
+            return current_user_can('manage_options') || (
+                current_user_can('send_messages') &&
+                function_exists('spp_user_has_membership') &&
+                spp_user_has_membership($user_id, 'paid')
+            );
+        }
+
+        /**
+         * Check whether a user is allowed to send a message right now (role, paid plan, monthly quota).
+         *
+         * @return true|WP_Error
+         */
+        public function can_send_message(int $user_id, bool $is_new_conversation = false) {
+            if (user_can($user_id, 'manage_options')) {
+                return true;
+            }
+
+            $user = get_userdata($user_id);
+            if (!$user) {
+                return new WP_Error('invalid_user', __('Invalid user account.', 'sports-player-platform'));
+            }
+
+            if (in_array('spp_parent', $user->roles, true)) {
+                return new WP_Error('role_restricted', __('Parent accounts cannot send direct messages. Upgrade a Coach or Player account to message.', 'sports-player-platform'));
+            }
+
+            if (!user_can($user_id, 'send_messages')) {
+                return new WP_Error('no_permission', __('You do not have permission to send messages.', 'sports-player-platform'));
+            }
+
+            if (!function_exists('spp_user_has_membership') || !spp_user_has_membership($user_id, 'paid')) {
+                return new WP_Error('paid_required', __('An active Monthly or Annual membership is required to send messages.', 'sports-player-platform'));
+            }
+
+            if ($is_new_conversation && in_array('spp_player', $user->roles, true)) {
+                return new WP_Error('player_reply_only', __('Players can reply to conversations initiated by coaches.', 'sports-player-platform'));
+            }
+
+            // Enforce monthly plan 50 messages/month limit
+            $membership = function_exists('spp_get_user_membership') ? spp_get_user_membership($user_id) : null;
+            if ($membership && ($membership['type'] ?? '') === 'monthly') {
+                $sent_this_month = $this->get_monthly_sent_count($user_id);
+                if ($sent_this_month >= self::MONTHLY_PLAN_LIMIT) {
+                    return new WP_Error('quota_exceeded', __('You have reached your 50 messages/month limit. Upgrade to Annual for unlimited messaging.', 'sports-player-platform'));
+                }
+            }
+
+            return true;
+        }
+
+        /**
+         * Count messages sent by user in the current calendar month.
+         */
+        public function get_monthly_sent_count(int $user_id): int {
+            global $wpdb;
+            $table = $wpdb->prefix . 'spp_messages';
+
+            return (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$table} WHERE sender_id = %d AND MONTH(sent_at) = MONTH(CURRENT_DATE()) AND YEAR(sent_at) = YEAR(CURRENT_DATE())",
+                $user_id
+            ));
+        }
+
+        /**
+         * Start a new conversation (or send to recipients).
+         */
         public function send_message(int $sender_id, array $recipient_ids, string $subject, string $message): int {
             global $wpdb;
 
             $conversations_table = $wpdb->prefix . 'spp_conversations';
-            $messages_table = $wpdb->prefix . 'spp_messages';
+            $messages_table      = $wpdb->prefix . 'spp_messages';
+            $recipient_ids       = array_values(array_unique(array_filter(array_map('absint', $recipient_ids))));
 
-            // Create conversation
+            if (empty($recipient_ids)) {
+                return 0;
+            }
+
             $participant_str = implode(',', $recipient_ids);
-            $wpdb->insert(
-                $conversations_table,
-                [
-                    'subject' => $subject,
-                    'sender_id' => $sender_id,
-                    'participant_ids' => $participant_str,
-                ]
-            );
+            $wpdb->insert($conversations_table, [
+                'subject'         => sanitize_text_field($subject),
+                'sender_id'       => $sender_id,
+                'participant_ids' => $participant_str,
+            ]);
 
-            $conversation_id = $wpdb->insert_id;
+            $conversation_id = (int) $wpdb->insert_id;
+            if (!$conversation_id) {
+                return 0;
+            }
 
-            // Insert message for each recipient
             foreach ($recipient_ids as $recipient_id) {
-                $wpdb->insert(
-                    $messages_table,
-                    [
-                        'conversation_id' => $conversation_id,
-                        'sender_id' => $sender_id,
-                        'recipient_id' => $recipient_id,
-                        'message' => wp_kses_post($message),
-                    ]
-                );
+                $wpdb->insert($messages_table, [
+                    'conversation_id' => $conversation_id,
+                    'sender_id'       => $sender_id,
+                    'recipient_id'    => $recipient_id,
+                    'message'         => wp_kses_post($message),
+                ]);
+
+                $this->notify_recipient($sender_id, $recipient_id, $conversation_id, $subject);
             }
 
             return $conversation_id;
         }
 
+        /**
+         * Reply to an existing conversation.
+         *
+         * @return int|WP_Error Message ID or WP_Error.
+         */
+        public function reply_to_conversation(int $conversation_id, int $sender_id, string $message) {
+            global $wpdb;
+
+            if (!$this->can_user_access_conversation($sender_id, $conversation_id)) {
+                return new WP_Error('forbidden', __('You do not have access to this conversation.', 'sports-player-platform'));
+            }
+
+            $can_send = $this->can_send_message($sender_id, false);
+            if (is_wp_error($can_send)) {
+                return $can_send;
+            }
+
+            $conversations_table = $wpdb->prefix . 'spp_conversations';
+            $messages_table      = $wpdb->prefix . 'spp_messages';
+
+            $conv = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM {$conversations_table} WHERE id = %d",
+                $conversation_id
+            ), ARRAY_A);
+
+            if (!$conv) {
+                return new WP_Error('not_found', __('Conversation not found.', 'sports-player-platform'));
+            }
+
+            $participants = array_map('absint', explode(',', (string) $conv['participant_ids']));
+            $participants[] = (int) $conv['sender_id'];
+            $recipients = array_values(array_unique(array_filter($participants, static fn(int $id): bool => $id > 0 && $id !== $sender_id)));
+
+            if (empty($recipients)) {
+                $recipients = [(int) $conv['sender_id']];
+            }
+
+            $inserted_id = 0;
+            foreach ($recipients as $recipient_id) {
+                $wpdb->insert($messages_table, [
+                    'conversation_id' => $conversation_id,
+                    'sender_id'       => $sender_id,
+                    'recipient_id'    => $recipient_id,
+                    'message'         => wp_kses_post($message),
+                ]);
+                $inserted_id = (int) $wpdb->insert_id;
+                $this->notify_recipient($sender_id, $recipient_id, $conversation_id, (string) $conv['subject']);
+            }
+
+            $wpdb->update(
+                $conversations_table,
+                ['updated_at' => current_time('mysql')],
+                ['id' => $conversation_id]
+            );
+
+            return $inserted_id;
+        }
+
+        /**
+         * Get user's conversations with unread count and last message preview.
+         */
         public function get_user_conversations(int $user_id, int $limit = 50): array {
             global $wpdb;
 
             $conversations_table = $wpdb->prefix . 'spp_conversations';
+            $messages_table      = $wpdb->prefix . 'spp_messages';
 
-            return $wpdb->get_results($wpdb->prepare(
-                "SELECT * FROM $conversations_table
-                WHERE FIND_IN_SET(%d, participant_ids)
+            $conversations = $wpdb->get_results($wpdb->prepare(
+                "SELECT * FROM {$conversations_table}
+                WHERE (sender_id = %d OR FIND_IN_SET(%d, participant_ids))
                 AND is_archived = 0
                 ORDER BY updated_at DESC
                 LIMIT %d",
                 $user_id,
+                $user_id,
                 $limit
-            ), ARRAY_A);
+            ), ARRAY_A) ?: [];
+
+            foreach ($conversations as &$conv) {
+                $conv['unread_count'] = (int) $wpdb->get_var($wpdb->prepare(
+                    "SELECT COUNT(*) FROM {$messages_table} WHERE conversation_id = %d AND recipient_id = %d AND is_read = 0 AND is_deleted = 0",
+                    (int) $conv['id'],
+                    $user_id
+                ));
+                $last = $wpdb->get_row($wpdb->prepare(
+                    "SELECT message, sent_at, sender_id FROM {$messages_table} WHERE conversation_id = %d AND is_deleted = 0 ORDER BY sent_at DESC LIMIT 1",
+                    (int) $conv['id']
+                ), ARRAY_A);
+                $conv['last_message'] = $last ? wp_trim_words(wp_strip_all_tags($last['message']), 10) : '';
+            }
+            unset($conv);
+
+            return $conversations;
         }
 
+        /**
+         * Fetch messages in a conversation and mark incoming messages as read.
+         */
         public function get_conversation_messages(int $conversation_id, int $user_id): array {
             global $wpdb;
+
+            if (!$this->can_user_access_conversation($user_id, $conversation_id)) {
+                return [];
+            }
 
             $messages_table = $wpdb->prefix . 'spp_messages';
 
             $messages = $wpdb->get_results($wpdb->prepare(
                 "SELECT m.*, u.display_name as sender_name
-                FROM $messages_table m
+                FROM {$messages_table} m
                 LEFT JOIN {$wpdb->users} u ON m.sender_id = u.ID
                 WHERE m.conversation_id = %d
+                AND (m.sender_id = %d OR m.recipient_id = %d)
                 AND m.is_deleted = 0
                 ORDER BY m.sent_at ASC",
-                $conversation_id
-            ), ARRAY_A);
+                $conversation_id,
+                $user_id,
+                $user_id
+            ), ARRAY_A) ?: [];
 
-            // Mark messages as read
             $wpdb->update(
                 $messages_table,
                 ['is_read' => 1],
                 [
                     'conversation_id' => $conversation_id,
-                    'recipient_id' => $user_id,
-                    'is_read' => 0,
+                    'recipient_id'    => $user_id,
+                    'is_read'         => 0,
                 ]
             );
 
@@ -121,137 +365,319 @@ if (!class_exists('SPP_Messaging')) {
         public function can_user_access_conversation(int $user_id, int $conversation_id): bool {
             global $wpdb;
 
-            $conversations_table = $wpdb->prefix . 'spp_conversations';
-
-            $participant_ids = $wpdb->get_var($wpdb->prepare(
-                "SELECT participant_ids FROM $conversations_table WHERE id = %d",
-                $conversation_id
-            ));
-
-            if (!$participant_ids) {
+            if (!$user_id || !$conversation_id) {
                 return false;
             }
 
-            $participants = explode(',', $participant_ids);
-            return in_array($user_id, $participants) || $wpdb->get_var($wpdb->prepare(
-                "SELECT sender_id FROM $conversations_table WHERE id = %d",
-                $conversation_id
-            )) === $user_id;
+            $conversations_table = $wpdb->prefix . 'spp_conversations';
+
+            return (bool) $wpdb->get_var($wpdb->prepare(
+                "SELECT id FROM {$conversations_table} WHERE id = %d AND (sender_id = %d OR FIND_IN_SET(%d, participant_ids))",
+                $conversation_id,
+                $user_id,
+                $user_id
+            ));
         }
 
+        /**
+         * Get total unread messages count for a user.
+         */
+        public function get_unread_count(int $user_id): int {
+            global $wpdb;
+            $table = $wpdb->prefix . 'spp_messages';
+
+            return (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$table} WHERE recipient_id = %d AND is_read = 0 AND is_deleted = 0",
+                $user_id
+            ));
+        }
+
+        /**
+         * Get unread in-app notifications for a user.
+         */
+        public function get_unread_notifications(int $user_id, int $limit = 10): array {
+            global $wpdb;
+            $table = $wpdb->prefix . 'spp_notifications';
+
+            return $wpdb->get_results($wpdb->prepare(
+                "SELECT * FROM {$table} WHERE user_id = %d AND is_read = 0 ORDER BY created_at DESC LIMIT %d",
+                $user_id,
+                $limit
+            ), ARRAY_A) ?: [];
+        }
+
+        /**
+         * Mark all notifications as read for a user.
+         */
+        public function mark_notifications_read(int $user_id): void {
+            global $wpdb;
+            $table = $wpdb->prefix . 'spp_notifications';
+            $wpdb->update($table, ['is_read' => 1], ['user_id' => $user_id, 'is_read' => 0]);
+        }
+
+        /**
+         * AJAX: Send new message or reply.
+         */
+        public function ajax_send_message(): void {
+            check_ajax_referer('spp_messaging_nonce', 'nonce');
+
+            if (!is_user_logged_in()) {
+                wp_send_json_error(['message' => __('Unauthorized.', 'sports-player-platform')], 401);
+            }
+
+            $sender_id       = get_current_user_id();
+            $conversation_id = absint($_POST['conversation_id'] ?? 0);
+            $recipient_id    = absint($_POST['recipient_id'] ?? 0);
+            $subject         = sanitize_text_field(wp_unslash($_POST['subject'] ?? __('New Message', 'sports-player-platform')));
+            $message         = trim((string) wp_unslash($_POST['message'] ?? ''));
+
+            if ($message === '') {
+                wp_send_json_error(['message' => __('Message cannot be empty.', 'sports-player-platform')], 400);
+            }
+
+            if ($conversation_id > 0) {
+                $res = $this->reply_to_conversation($conversation_id, $sender_id, $message);
+                if (is_wp_error($res)) {
+                    wp_send_json_error(['message' => $res->get_error_message()], 403);
+                }
+                wp_send_json_success([
+                    'conversation_id' => $conversation_id,
+                    'messages'        => $this->get_conversation_messages($conversation_id, $sender_id),
+                ]);
+            }
+
+            $can_send = $this->can_send_message($sender_id, true);
+            if (is_wp_error($can_send)) {
+                wp_send_json_error(['message' => $can_send->get_error_message()], 403);
+            }
+
+            if (!$recipient_id || !get_userdata($recipient_id)) {
+                wp_send_json_error(['message' => __('Please select a valid recipient.', 'sports-player-platform')], 400);
+            }
+
+            $new_conv_id = $this->send_message($sender_id, [$recipient_id], $subject, $message);
+            if (!$new_conv_id) {
+                wp_send_json_error(['message' => __('Failed to create conversation.', 'sports-player-platform')], 500);
+            }
+
+            wp_send_json_success([
+                'conversation_id' => $new_conv_id,
+                'messages'        => $this->get_conversation_messages($new_conv_id, $sender_id),
+            ]);
+        }
+
+        /**
+         * AJAX: Poll latest messages for active thread and unread counts.
+         */
+        public function ajax_fetch_messages(): void {
+            check_ajax_referer('spp_messaging_nonce', 'nonce');
+
+            if (!is_user_logged_in()) {
+                wp_send_json_error(['message' => __('Unauthorized.', 'sports-player-platform')], 401);
+            }
+
+            $user_id         = get_current_user_id();
+            $conversation_id = absint($_GET['conversation_id'] ?? 0);
+            $messages        = [];
+
+            if ($conversation_id > 0 && $this->can_user_access_conversation($user_id, $conversation_id)) {
+                $messages = $this->get_conversation_messages($conversation_id, $user_id);
+            }
+
+            wp_send_json_success([
+                'messages'     => $messages,
+                'unread_total' => $this->get_unread_count($user_id),
+            ]);
+        }
+
+        /**
+         * AJAX: Mark notifications read.
+         */
+        public function ajax_mark_notifications_read(): void {
+            check_ajax_referer('spp_messaging_nonce', 'nonce');
+            if (!is_user_logged_in()) {
+                wp_send_json_error(['message' => __('Unauthorized.', 'sports-player-platform')], 401);
+            }
+            $this->mark_notifications_read(get_current_user_id());
+            wp_send_json_success();
+        }
+
+        public function rest_get_conversations(): WP_REST_Response {
+            return new WP_REST_Response($this->get_user_conversations(get_current_user_id()), 200);
+        }
+
+        public function rest_get_thread(WP_REST_Request $request): WP_REST_Response {
+            $conv_id = absint($request['id']);
+            $user_id = get_current_user_id();
+            if (!$this->can_user_access_conversation($user_id, $conv_id)) {
+                return new WP_REST_Response(['error' => 'Forbidden'], 403);
+            }
+            return new WP_REST_Response($this->get_conversation_messages($conv_id, $user_id), 200);
+        }
+
+        public function rest_send_message(WP_REST_Request $request): WP_REST_Response {
+            $sender_id       = get_current_user_id();
+            $conversation_id = absint($request->get_param('conversation_id') ?? 0);
+            $recipient_id    = absint($request->get_param('recipient_id') ?? 0);
+            $subject         = sanitize_text_field((string) ($request->get_param('subject') ?? __('New Message', 'sports-player-platform')));
+            $message         = trim((string) ($request->get_param('message') ?? ''));
+
+            if ($message === '') {
+                return new WP_REST_Response(['error' => 'Message is required'], 400);
+            }
+
+            if ($conversation_id > 0) {
+                $res = $this->reply_to_conversation($conversation_id, $sender_id, $message);
+                if (is_wp_error($res)) {
+                    return new WP_REST_Response(['error' => $res->get_error_message()], 403);
+                }
+                return new WP_REST_Response(['conversation_id' => $conversation_id, 'message_id' => $res], 201);
+            }
+
+            $can_send = $this->can_send_message($sender_id, true);
+            if (is_wp_error($can_send)) {
+                return new WP_REST_Response(['error' => $can_send->get_error_message()], 403);
+            }
+
+            if (!$recipient_id) {
+                return new WP_REST_Response(['error' => 'Recipient is required'], 400);
+            }
+
+            $new_id = $this->send_message($sender_id, [$recipient_id], $subject, $message);
+            return new WP_REST_Response(['conversation_id' => $new_id], 201);
+        }
+
+        public function rest_get_notifications(): WP_REST_Response {
+            return new WP_REST_Response($this->get_unread_notifications(get_current_user_id()), 200);
+        }
+
+        public function rest_mark_notifications_read(): WP_REST_Response {
+            $this->mark_notifications_read(get_current_user_id());
+            return new WP_REST_Response(['success' => true], 200);
+        }
+
+        /**
+         * Render [spp_messages] split-pane UI.
+         */
         public function render_messages_page(): string {
             if (!is_user_logged_in()) {
-                return '<p>' . __('You must be logged in to view messages.', 'sports-player-platform') . '</p>';
+                return '<div class="spp-notice spp-notice-error"><p>' . esc_html__('Please log in to view messages.', 'sports-player-platform') . '</p></div>';
             }
 
             $user_id = get_current_user_id();
-            $action = $_GET['spp_message_action'] ?? '';
-            $conversation_id = absint($_GET['conversation'] ?? 0);
+            $user    = wp_get_current_user();
 
-            if ($action === 'archive' && current_user_can('edit_posts')) {
-                global $wpdb;
-                $wpdb->update(
-                    $wpdb->prefix . 'spp_conversations',
-                    ['is_archived' => 1],
-                    ['id' => $conversation_id]
-                );
-                wp_safe_redirect(remove_query_arg(['spp_message_action', 'conversation']));
-                exit;
+            if (!current_user_can('manage_options') && in_array('spp_parent', $user->roles, true)) {
+                return '<div class="spp-dashboard-wrap"><div class="spp-notice spp-notice-info"><p>' .
+                    esc_html__('Direct messaging is not available for Parent accounts. Please register a Coach or Player account.', 'sports-player-platform') .
+                    '</p></div></div>';
             }
 
-            ob_start();
-            ?>
-            <div class="spp-messages-page">
-                <h1><?php esc_html_e('Messages', 'sports-player-platform'); ?></h1>
-
-                <?php
-                if ($conversation_id && $this->can_user_access_conversation($user_id, $conversation_id)) {
-                    $messages = $this->get_conversation_messages($conversation_id, $user_id);
-                    $conversation = $wpdb->get_row(
-                        $wpdb->prepare(
-                            "SELECT * FROM {$wpdb->prefix}spp_conversations WHERE id = %d",
-                            $conversation_id
-                        )
-                    );
-                    ?>
-                    <div class="spp-conversation-view">
-                        <h2><?php echo esc_html($conversation->subject ?? ''); ?></h2>
-                        <a href="<?php echo esc_url(remove_query_arg('conversation')); ?>" class="button button-secondary"><?php esc_html_e('Back to Conversations', 'sports-player-platform'); ?></a>
-
-                        <div class="spp-messages-list">
-                            <?php if ($messages): ?>
-                                <?php foreach ($messages as $msg): ?>
-                                    <div class="spp-message <?php echo $msg['sender_id'] == $user_id ? 'spp-message-sent' : 'spp-message-received'; ?>">
-                                        <strong><?php echo esc_html($msg['sender_name']); ?>:</strong>
-                                        <p><?php echo wp_kses_post($msg['message']); ?></p>
-                                        <small><?php echo esc_html(date('Y-m-d H:i:s', strtotime($msg['sent_at']))); ?></small>
-                                    </div>
-                                <?php endforeach; ?>
-                            <?php else: ?>
-                                <p><?php esc_html_e('No messages in this conversation.', 'sports-player-platform'); ?></p>
-                            <?php endif; ?>
-                        </div>
-
-                        <?php echo $this->render_message_form($conversation_id); ?>
-                    </div>
-                <?php } else { ?>
-                    <p><a href="<?php echo esc_url(add_query_arg(['action' => 'compose'], home_url())); ?>">
-                        <?php esc_html_e('Compose New Message', 'sports-player-platform'); ?>
-                    </a></p>
-
-                    <?php
-                    $conversations = $this->get_user_conversations($user_id);
-                    ?>
-
-                    <?php if ($conversations): ?>
-                        <table class="widefat">
-                            <thead>
-                                <tr>
-                                    <th><?php esc_html_e('Subject', 'sports-player-platform'); ?></th>
-                                    <th><?php esc_html_e('Last Updated', 'sports-player-platform'); ?></th>
-                                    <th><?php esc_html_e('Actions', 'sports-player-platform'); ?></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($conversations as $conv): ?>
-                                    <tr>
-                                        <td><a href="<?php echo esc_url(add_query_arg('conversation', $conv['id'])); ?>"><?php echo esc_html($conv['subject']); ?></a></td>
-                                        <td><?php echo esc_html(date('Y-m-d H:i:s', strtotime($conv['updated_at']))); ?></td>
-                                        <td>
-                                            <a href="<?php echo esc_url(add_query_arg('conversation', $conv['id'])); ?>" class="button button-small"><?php esc_html_e('View', 'sports-player-platform'); ?></a>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    <?php else: ?>
-                        <p><?php esc_html_e('No conversations found.', 'sports-player-platform'); ?></p>
-                    <?php endif; ?>
-                <?php } ?>
-            </div>
-            <?php
-                return ob_get_clean();
+            if (!current_user_can('manage_options') && (!function_exists('spp_user_has_membership') || !spp_user_has_membership($user_id, 'paid'))) {
+                return '<div class="spp-dashboard-wrap"><div class="spp-notice spp-notice-info"><p>' .
+                    esc_html__('Upgrade to a Monthly or Annual plan to unlock direct messaging.', 'sports-player-platform') .
+                    ' <a href="' . esc_url(home_url('/pricing/')) . '" class="spp-btn spp-btn-primary">' . esc_html__('View Plans', 'sports-player-platform') . '</a></p></div></div>';
             }
 
-        public function render_message_form(int $conversation_id = 0): string {
-            if (!is_user_logged_in()) {
+            $conversations   = $this->get_user_conversations($user_id);
+            $active_conv_id  = absint($_GET['conversation'] ?? ($conversations[0]['id'] ?? 0));
+            $active_messages = $active_conv_id ? $this->get_conversation_messages($active_conv_id, $user_id) : [];
+
+            $recipients = [];
+            if (current_user_can('create_recruiting_list') || current_user_can('manage_options')) {
+                $recipients = get_users(['role' => 'spp_player', 'number' => 100, 'fields' => ['ID', 'display_name']]);
+            }
+
+            $template_path = SPP_PLUGIN_DIR . 'templates/dashboard/messages.php';
+            if (!file_exists($template_path)) {
                 return '';
             }
 
+            $active_tab = 'messages';
+            ob_start();
+            include $template_path;
+            return (string) ob_get_clean();
+        }
+
+        /**
+         * Render [spp_message_form recipient_id="..."] shortcode.
+         */
+        public function render_message_form(array $atts = []): string {
+            $atts = shortcode_atts(['recipient_id' => 0], $atts);
+            $recipient_id = absint($atts['recipient_id']);
+
+            if (!is_user_logged_in() || !$recipient_id) {
+                return '';
+            }
+
+            $can_send = $this->can_send_message(get_current_user_id(), true);
+            if (is_wp_error($can_send)) {
+                return '<p class="spp-notice spp-notice-info">' . esc_html($can_send->get_error_message()) . '</p>';
+            }
+
             ob_start();
             ?>
-            <form method="post" action="">
-                <?php wp_nonce_field('spp_message_nonce', 'spp_nonce'); ?>
-                <input type="hidden" name="spp_message_action" value="send">
-                <?php if ($conversation_id): ?>
-                    <input type="hidden" name="conversation_id" value="<?php echo esc_attr($conversation_id); ?>">
-                <?php endif; ?>
-
-                <textarea name="message" id="message" rows="4" class="large-text" required></textarea>
-                <p><button type="submit" class="button button-primary"><?php esc_html_e('Send Message', 'sports-player-platform'); ?></button></p>
+            <form class="spp-inline-message-form spp-form" data-recipient-id="<?php echo esc_attr((string) $recipient_id); ?>">
+                <p class="spp-form-field">
+                    <label><?php esc_html_e('Subject', 'sports-player-platform'); ?></label>
+                    <input type="text" name="subject" required placeholder="<?php esc_attr_e('Recruiting Inquiry', 'sports-player-platform'); ?>">
+                </p>
+                <p class="spp-form-field">
+                    <label><?php esc_html_e('Message', 'sports-player-platform'); ?></label>
+                    <textarea name="message" rows="3" required></textarea>
+                </p>
+                <button type="submit" class="spp-btn spp-btn-primary"><?php esc_html_e('Send Message', 'sports-player-platform'); ?></button>
+                <div class="spp-inline-msg-feedback"></div>
             </form>
             <?php
-            return ob_get_clean();
+            return (string) ob_get_clean();
+        }
+
+        /**
+         * Create in-app notification and optionally send email notification.
+         */
+        private function notify_recipient(int $sender_id, int $recipient_id, int $conversation_id, string $subject): void {
+            global $wpdb;
+
+            $sender      = get_userdata($sender_id);
+            $sender_name = $sender ? $sender->display_name : __('Someone', 'sports-player-platform');
+
+            $wpdb->insert($wpdb->prefix . 'spp_notifications', [
+                'user_id' => $recipient_id,
+                'type'    => 'message',
+                'title'   => sprintf(__('New message from %s', 'sports-player-platform'), $sender_name),
+                'message' => $subject,
+                'link'    => add_query_arg('conversation', $conversation_id, home_url('/dashboard/messages/')),
+            ]);
+
+            $opt_in = get_user_meta($recipient_id, 'spp_email_message_notifications', true);
+            if ($opt_in === '1') {
+                $recipient = get_userdata($recipient_id);
+                if ($recipient && is_email($recipient->user_email)) {
+                    $message_url = add_query_arg('conversation', $conversation_id, home_url('/dashboard/messages/'));
+                    $email_subject = sprintf(__('New message from %s - Sports Player Platform', 'sports-player-platform'), $sender_name);
+                    if (class_exists('SPP_Email')) {
+                        SPP_Email::send($recipient->user_email, 'new-message', [
+                            'subject' => $email_subject,
+                            'name' => $recipient->display_name,
+                            'sender_name' => $sender_name,
+                            'message_subject' => $subject,
+                            'url' => $message_url,
+                        ]);
+                    } else {
+                        wp_mail(
+                            $recipient->user_email,
+                            $email_subject,
+                            sprintf(
+                                __("Hello %s,\n\nYou received a new message regarding \"%s\".\n\nView it here: %s", 'sports-player-platform'),
+                                $recipient->display_name,
+                                $subject,
+                                $message_url
+                            )
+                        );
+                    }
+                }
+            }
         }
     }
 }

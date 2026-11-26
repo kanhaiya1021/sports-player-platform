@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<ruleset name="Sports Player Platform">
+	<description>WordPress coding standards for the foundation and authentication modules.</description>
+	<file>sports-player-platform.php</file>
+	<file>uninstall.php</file>
+	<file>includes/functions.php</file>
+	<file>includes/database/</file>
+	<file>includes/auth/</file>
+	<file>templates/auth/</file>
+	<file>modules/core/class-spp-plugin.php</file>
+	<file>modules/core/class-spp-content-types.php</file>
+	<file>modules/core/class-spp-pages.php</file>
+	<arg name="extensions" value="php"/>
+	<config name="minimum_supported_wp_version" value="6.2"/>
+	<rule ref="WordPress"/>
+	<rule ref="WordPress.WP.I18n">
+		<properties>
+			<property name="text_domain" type="array">
+				<element value="sports-player-platform"/>
+			</property>
+		</properties>
+	</rule>
+</ruleset>

@@ -7,6 +7,7 @@
  * @var bool   $is_logged_in
  * @var string $ajax_url
  * @var string $nonce
+ * @var bool   $payments_enabled
  */
 
 if (!defined('ABSPATH')) {
@@ -49,8 +50,14 @@ if (!defined('ABSPATH')) {
                     <?php if ($is_current): ?>
                         <span class="spp-btn spp-btn-disabled"><?php esc_html_e('Current Plan', 'sports-player-platform'); ?></span>
                     <?php elseif ($plan_id === 'free'): ?>
-                        <a href="<?php echo esc_url($is_logged_in ? home_url('/dashboard/') : home_url('/register/')); ?>" class="spp-btn spp-btn-secondary">
+                        <a href="<?php echo esc_url($is_logged_in ? spp_page_url('dashboard') : spp_page_url('register')); ?>" class="spp-btn spp-btn-secondary">
                             <?php echo $is_logged_in ? esc_html__('Go to Dashboard', 'sports-player-platform') : esc_html__('Get Started Free', 'sports-player-platform'); ?>
+                        </a>
+                    <?php elseif (!$payments_enabled): ?>
+                        <span class="spp-btn spp-btn-disabled"><?php esc_html_e('Checkout unavailable', 'sports-player-platform'); ?></span>
+                    <?php elseif (!$is_logged_in): ?>
+                        <a href="<?php echo esc_url(add_query_arg('redirect_to', rawurlencode(spp_page_url('pricing')), spp_page_url('login'))); ?>" class="spp-btn spp-btn-secondary">
+                            <?php esc_html_e('Log in to upgrade', 'sports-player-platform'); ?>
                         </a>
                     <?php else: ?>
                         <button type="button" class="spp-btn spp-btn-primary spp-checkout-btn" data-plan="<?php echo esc_attr($plan_id); ?>">
@@ -79,16 +86,8 @@ if (!defined('ABSPATH')) {
                     <td>✓</td><td>✓</td><td>✓</td>
                 </tr>
                 <tr>
-                    <td><?php esc_html_e('View Contact Info', 'sports-player-platform'); ?></td>
+                    <td><?php esc_html_e('Message inbox access for eligible accounts', 'sports-player-platform'); ?></td>
                     <td>—</td><td>✓</td><td>✓</td>
-                </tr>
-                <tr>
-                    <td><?php esc_html_e('Direct Messaging', 'sports-player-platform'); ?></td>
-                    <td>—</td><td>50 / mo</td><td><?php esc_html_e('Unlimited', 'sports-player-platform'); ?></td>
-                </tr>
-                <tr>
-                    <td><?php esc_html_e('Recruiting Lists', 'sports-player-platform'); ?></td>
-                    <td>—</td><td>5</td><td><?php esc_html_e('Unlimited', 'sports-player-platform'); ?></td>
                 </tr>
             </tbody>
         </table>

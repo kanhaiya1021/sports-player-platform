@@ -76,14 +76,12 @@ $positions = ['Goalkeeper', 'Defender', 'Midfielder', 'Forward', 'Guard', 'Cente
             </p>
             <p class="spp-form-field">
                 <label for="spp_position"><?php esc_html_e('Playing Position', 'sports-player-platform'); ?></label>
-                <select id="spp_position" name="playing_position">
-                    <option value=""><?php esc_html_e('Select Position', 'sports-player-platform'); ?></option>
+                <input type="text" id="spp_position" name="playing_position" list="spp_positions" value="<?php echo esc_attr($profile['playing_position']); ?>">
+                <datalist id="spp_positions">
                     <?php foreach ($positions as $pos): ?>
-                        <option value="<?php echo esc_attr($pos); ?>" <?php selected($profile['playing_position'], $pos); ?>>
-                            <?php echo esc_html($pos); ?>
-                        </option>
+                        <option value="<?php echo esc_attr($pos); ?>"></option>
                     <?php endforeach; ?>
-                </select>
+                </datalist>
             </p>
             <div class="spp-form-row">
                 <p class="spp-form-field">
@@ -98,7 +96,7 @@ $positions = ['Goalkeeper', 'Defender', 'Midfielder', 'Forward', 'Guard', 'Cente
             <div class="spp-form-row">
                 <p class="spp-form-field">
                     <label for="spp_grad_year"><?php esc_html_e('Graduation Year', 'sports-player-platform'); ?></label>
-                    <input type="number" id="spp_grad_year" name="graduation_year" min="1990" max="2035" value="<?php echo esc_attr($profile['graduation_year']); ?>">
+                    <input type="number" id="spp_grad_year" name="graduation_year" min="1900" max="2100" value="<?php echo esc_attr($profile['graduation_year']); ?>">
                 </p>
                 <p class="spp-form-field">
                     <label for="spp_school"><?php esc_html_e('School / Club', 'sports-player-platform'); ?></label>
@@ -110,12 +108,12 @@ $positions = ['Goalkeeper', 'Defender', 'Midfielder', 'Forward', 'Guard', 'Cente
         <!-- Tab 3: Media -->
         <div class="spp-tab-panel" data-panel="media">
             <p class="spp-form-field">
-                <label for="spp_image_gallery"><?php esc_html_e('Photo Gallery URLs (comma-separated)', 'sports-player-platform'); ?></label>
-                <textarea id="spp_image_gallery" name="image_gallery" rows="3" placeholder="https://.../img1.jpg, https://.../img2.jpg"><?php echo esc_textarea($profile['image_gallery']); ?></textarea>
+                <label for="spp_image_gallery"><?php esc_html_e('Photo Gallery URLs (one per line)', 'sports-player-platform'); ?></label>
+                <textarea id="spp_image_gallery" name="image_gallery" rows="3"><?php echo esc_textarea($profile['image_gallery']); ?></textarea>
             </p>
             <p class="spp-form-field">
-                <label for="spp_videos_highlights"><?php esc_html_e('Highlight Video URL (YouTube / Vimeo)', 'sports-player-platform'); ?></label>
-                <input type="url" id="spp_videos_highlights" name="videos_highlights" value="<?php echo esc_attr($profile['videos_highlights']); ?>" placeholder="https://www.youtube.com/watch?v=...">
+                <label for="spp_videos_highlights"><?php esc_html_e('Highlight Video URLs (one per line)', 'sports-player-platform'); ?></label>
+                <textarea id="spp_videos_highlights" name="videos_highlights" rows="3"><?php echo esc_textarea($profile['videos_highlights']); ?></textarea>
             </p>
         </div>
 

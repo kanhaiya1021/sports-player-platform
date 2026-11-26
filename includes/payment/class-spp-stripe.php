@@ -44,12 +44,14 @@ if (!class_exists('SPP_Stripe')) {
 
             $body = [
                 'mode'                       => 'subscription',
-                'success_url'                => add_query_arg(['spp_payment' => 'success'], home_url('/dashboard/membership/')),
-                'cancel_url'                 => add_query_arg(['spp_payment' => 'cancelled'], home_url('/pricing/')),
+                'success_url'                => add_query_arg(['spp_payment' => 'success'], spp_page_url('dashboard/membership')),
+                'cancel_url'                 => add_query_arg(['spp_payment' => 'cancelled'], spp_page_url('pricing')),
                 'customer_email'             => $user->user_email,
                 'client_reference_id'        => (string) $user_id,
                 'metadata[user_id]'          => (string) $user_id,
                 'metadata[plan_id]'          => (string) $plan['id'],
+                'subscription_data[metadata][spp_user_id]' => (string) $user_id,
+                'subscription_data[metadata][spp_plan_id]' => (string) $plan['id'],
                 'line_items[0][quantity]'    => 1,
                 'line_items[0][price_data][currency]'                  => strtolower($plan['currency'] ?? 'usd'),
                 'line_items[0][price_data][unit_amount]'               => $unit_amount,
@@ -89,57 +91,81 @@ if (!class_exists('SPP_Stripe')) {
             $sig_header = (string) $request->get_header('stripe-signature');
             $secret     = $this->get_webhook_secret();
 
-            if ($secret !== '' && !$this->verify_signature($payload, $sig_header, $secret)) {
+            if ($secret === '' || !$this->verify_signature($payload, $sig_header, $secret)) {
                 return new WP_REST_Response(['error' => 'Invalid signature'], 400);
             }
 
             $event = json_decode($payload, true);
-            if (!is_array($event) || empty($event['type'])) {
+            if (!is_array($event) || empty($event['type']) || empty($event['id']) || empty($event['created'])) {
                 return new WP_REST_Response(['error' => 'Invalid payload'], 400);
             }
 
-            $type   = $event['type'];
-            $object = $event['data']['object'] ?? [];
-
-            switch ($type) {
-                case 'checkout.session.completed':
-                    $user_id = absint($object['metadata']['user_id'] ?? ($object['client_reference_id'] ?? 0));
-                    $plan_id = sanitize_key($object['metadata']['plan_id'] ?? 'monthly');
-                    $sub_id  = sanitize_text_field($object['subscription'] ?? ($object['id'] ?? ''));
-                    $amount  = isset($object['amount_total']) ? ((float) $object['amount_total'] / 100) : 0.00;
-                    $curr    = strtoupper((string) ($object['currency'] ?? 'USD'));
-
-                    if ($user_id > 0 && class_exists('SPP_Membership')) {
-                        $expires = $plan_id === 'annual'
-                            ? gmdate('Y-m-d H:i:s', strtotime('+1 year'))
-                            : gmdate('Y-m-d H:i:s', strtotime('+1 month'));
-
-                        SPP_Membership::get_instance()->upgrade_membership($user_id, $plan_id, $expires, 'stripe');
-                        update_user_meta($user_id, 'spp_stripe_subscription_id', $sub_id);
-
-                        SPP_Payment::log_payment($user_id, 'stripe', $sub_id, $amount, $curr, 'completed', null, $event);
-                    }
-                    break;
-
-                case 'invoice.payment_failed':
-                    $sub_id  = sanitize_text_field($object['subscription'] ?? '');
-                    $user_id = $this->find_user_by_subscription($sub_id);
-                    if ($user_id > 0) {
-                        SPP_Payment::log_payment($user_id, 'stripe', $sub_id, 0.00, 'USD', 'failed', null, $event);
-                    }
-                    break;
-
-                case 'customer.subscription.deleted':
-                    $sub_id  = sanitize_text_field($object['id'] ?? '');
-                    $user_id = $this->find_user_by_subscription($sub_id);
-                    if ($user_id > 0 && class_exists('SPP_Membership')) {
-                        SPP_Membership::get_instance()->cancel_membership($user_id);
-                        SPP_Payment::log_payment($user_id, 'stripe', $sub_id, 0.00, 'USD', 'cancelled', null, $event);
-                    }
-                    break;
+            $type = $event['type'];
+            if (!in_array($type, ['invoice.paid', 'invoice.payment_failed', 'customer.subscription.deleted'], true)) {
+                return SPP_Payment::webhook_response();
             }
 
-            return new WP_REST_Response(['received' => true], 200);
+            $object = $event['data']['object'] ?? [];
+            $is_deleted = $type === 'customer.subscription.deleted';
+            $details = $object['parent']['subscription_details'] ?? $object['subscription_details'] ?? [];
+            $sub_id = $is_deleted ? ($object['id'] ?? '') : ($details['subscription'] ?? $object['subscription'] ?? '');
+            if (!is_string($sub_id) || !preg_match('/^sub_[A-Za-z0-9]{1,130}$/D', $sub_id)) {
+                return SPP_Payment::webhook_response();
+            }
+
+            $memberships = SPP_Membership::get_instance();
+            $existing = $memberships->get_subscription('stripe', $sub_id);
+            $metadata = $is_deleted ? ($object['metadata'] ?? []) : ($details['metadata'] ?? []);
+            $user_id = (int) ($existing['user_id'] ?? $metadata['spp_user_id'] ?? $this->find_user_by_subscription($sub_id));
+            $plan_id = $existing['type'] ?? $metadata['spp_plan_id'] ?? '';
+            if ($user_id && $plan_id === '') {
+                $legacy = $memberships->get_user_membership($user_id);
+                if (empty($legacy['transaction_id'])) {
+                    $plan_id = $legacy['type'] ?? '';
+                }
+            }
+
+            if (!$user_id || !get_userdata($user_id) || !in_array($plan_id, ['monthly', 'annual'], true)) {
+                return SPP_Payment::webhook_response();
+            }
+
+            $period_end = 0;
+            $amount = 0.0;
+            $status = SPP_Membership::STATUS_CANCELLED;
+            $log_status = 'cancelled';
+            $transaction_id = $object['id'] ?? $sub_id;
+
+            if (!$is_deleted) {
+                if (!in_array($object['billing_reason'] ?? '', ['subscription_create', 'subscription_cycle'], true)) {
+                    return SPP_Payment::webhook_response();
+                }
+                $amount = (float) ($object['amount_paid'] ?? 0) / 100;
+                $status = SPP_Membership::STATUS_PAUSED;
+                $log_status = 'failed';
+                if ($type === 'invoice.paid') {
+                    if (($object['status'] ?? '') !== 'paid'
+                        || !SPP_Payment::matches_payment_plan($plan_id, $amount, $object['currency'] ?? '')) {
+                        return SPP_Payment::webhook_response();
+                    }
+                    foreach ($object['lines']['data'] ?? [] as $line) {
+                        $line_details = $line['parent']['subscription_item_details'] ?? [];
+                        $is_subscription_line = $line_details || ($line['type'] ?? '') === 'subscription';
+                        if ($is_subscription_line && empty($line_details['proration'] ?? $line['proration'] ?? false)) {
+                            $period_end = max($period_end, (int) ($line['period']['end'] ?? 0));
+                        }
+                    }
+                    if (!$period_end) {
+                        return SPP_Payment::webhook_response(false);
+                    }
+                    $status = SPP_Membership::STATUS_ACTIVE;
+                    $log_status = 'completed';
+                }
+            }
+
+            $saved = $memberships->record_subscription($user_id, $plan_id, 'stripe', $sub_id, (int) $event['created'], $status, $period_end)
+                && SPP_Payment::log_payment($user_id, 'stripe', $transaction_id, $amount, $object['currency'] ?? 'USD', $log_status, $event['id']);
+
+            return SPP_Payment::webhook_response($saved);
         }
 
         /**
@@ -157,7 +183,7 @@ if (!class_exists('SPP_Stripe')) {
                 'timeout' => 15,
             ]);
 
-            return !is_wp_error($response) && wp_remote_retrieve_response_code($response) < 400;
+            return !is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200;
         }
 
         /**
@@ -168,22 +194,29 @@ if (!class_exists('SPP_Stripe')) {
                 return false;
             }
 
-            $parts = [];
+            $timestamp = '';
+            $signatures = [];
             foreach (explode(',', $sig_header) as $item) {
-                $kv = explode('=', trim($item), 2);
-                if (count($kv) === 2) {
-                    $parts[$kv[0]] = $kv[1];
+                [$key, $value] = array_pad(explode('=', trim($item), 2), 2, '');
+                if ($key === 't') {
+                    $timestamp = $value;
+                } elseif ($key === 'v1') {
+                    $signatures[] = $value;
                 }
             }
 
-            if (empty($parts['t']) || empty($parts['v1'])) {
+            if (!ctype_digit($timestamp) || abs(time() - (int) $timestamp) > 300) {
                 return false;
             }
 
-            $signed_payload = $parts['t'] . '.' . $payload;
-            $expected_sig   = hash_hmac('sha256', $signed_payload, $secret);
+            $expected_sig = hash_hmac('sha256', $timestamp . '.' . $payload, $secret);
+            foreach ($signatures as $signature) {
+                if (hash_equals($expected_sig, $signature)) {
+                    return true;
+                }
+            }
 
-            return hash_equals($expected_sig, $parts['v1']);
+            return false;
         }
 
         private function find_user_by_subscription(string $sub_id): int {

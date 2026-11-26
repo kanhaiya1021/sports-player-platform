@@ -31,7 +31,7 @@ $avatar_url  = function_exists('spp_get_avatar_url') ? spp_get_avatar_url($user-
             </div>
         </div>
         <?php if ($plan_type === 'free'): ?>
-            <a href="<?php echo esc_url(home_url('/pricing/')); ?>" class="spp-btn spp-btn-primary">
+            <a href="<?php echo esc_url(spp_page_url('pricing')); ?>" class="spp-btn spp-btn-primary">
                 <?php esc_html_e('Upgrade Plan', 'sports-player-platform'); ?>
             </a>
         <?php endif; ?>
@@ -46,6 +46,16 @@ $avatar_url  = function_exists('spp_get_avatar_url') ? spp_get_avatar_url($user-
         <?php endforeach; ?>
     </div>
 
+    <?php if ($role === 'spp_player' && class_exists('SPP_Recruiting')): ?>
+        <?php
+        $player_posts = get_posts(['post_type' => 'player', 'author' => $user->ID, 'post_status' => ['publish', 'spp_pending'], 'posts_per_page' => 1, 'fields' => 'ids']);
+        $coach_views  = !empty($player_posts) ? SPP_Recruiting::get_instance()->get_coach_views_count((int) $player_posts[0]) : 0;
+        ?>
+        <div class="spp-notice spp-notice-info">
+            <p><?php printf(esc_html__('Your profile was viewed by %d coaches in the last 30 days.', 'sports-player-platform'), $coach_views); ?></p>
+        </div>
+    <?php endif; ?>
+
     <div class="spp-quick-links">
         <h3><?php esc_html_e('Quick Actions', 'sports-player-platform'); ?></h3>
         <div class="spp-quick-links-grid">
@@ -55,7 +65,7 @@ $avatar_url  = function_exists('spp_get_avatar_url') ? spp_get_avatar_url($user-
             <a href="<?php echo esc_url(home_url('/rankings/')); ?>" class="spp-quick-card">
                 <?php esc_html_e('View Rankings', 'sports-player-platform'); ?>
             </a>
-            <a href="<?php echo esc_url(home_url('/dashboard/membership/')); ?>" class="spp-quick-card">
+            <a href="<?php echo esc_url(spp_page_url('dashboard/membership')); ?>" class="spp-quick-card">
                 <?php esc_html_e('Manage Membership', 'sports-player-platform'); ?>
             </a>
         </div>

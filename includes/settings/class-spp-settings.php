@@ -69,12 +69,12 @@ if (!class_exists('SPP_Settings')) {
             );
 
             add_settings_field(
-                'spp_membership_plans',
-                __('Membership Plans', 'sports-player-platform'),
-                [$this, 'render_textarea_field'],
+                'spp_require_email_verification',
+                __('Require Email Verification', 'sports-player-platform'),
+                [$this, 'render_checkbox_field'],
                 'spp-settings',
                 'spp_general_section',
-                ['option' => 'spp_membership_plans', 'label' => __('Define membership plans (one per line, format: name|price|duration):', 'sports-player-platform')]
+                ['option' => 'spp_require_email_verification', 'label' => __('Require new users to verify their email before logging in (enable on live/SMTP sites).', 'sports-player-platform')]
             );
 
             add_settings_section(
@@ -146,10 +146,27 @@ if (!class_exists('SPP_Settings')) {
                 'spp_payment_section',
                 ['option' => 'spp_paypal_secret', 'type' => 'password', 'label' => __('PayPal REST App Secret', 'sports-player-platform')]
             );
+
+            $paypal_fields = [
+                'spp_paypal_webhook_id' => [__('PayPal Webhook ID', 'sports-player-platform'), __('Register the endpoint at /wp-json/spp/v1/paypal-webhook.', 'sports-player-platform')],
+                'spp_paypal_monthly_plan_id' => [__('PayPal Monthly Plan ID', 'sports-player-platform'), __('Active recurring USD 29 monthly plan.', 'sports-player-platform')],
+                'spp_paypal_annual_plan_id' => [__('PayPal Annual Plan ID', 'sports-player-platform'), __('Active recurring USD 249 annual plan.', 'sports-player-platform')],
+            ];
+            foreach ($paypal_fields as $option => [$title, $description]) {
+                add_settings_field($option, $title, [$this, 'render_text_field'], 'spp-settings', 'spp_payment_section', [
+                    'option' => $option,
+                    'label' => $description,
+                ]);
+            }
         }
 
-        public function sanitize_options(array $options): array {
-            $sanitized = [];
+        public function sanitize_options($options): array {
+            $saved = (array) get_option('spp_settings', []);
+            if (!is_array($options)) {
+                return $saved;
+            }
+
+            $sanitized = array_diff_key($saved, array_flip(['spp_payments_enabled', 'spp_paypal_sandbox', 'spp_require_email_verification']));
 
             if (isset($options['spp_events_provider_url'])) {
                 $sanitized['spp_events_provider_url'] = esc_url_raw($options['spp_events_provider_url']);
@@ -157,8 +174,8 @@ if (!class_exists('SPP_Settings')) {
             if (isset($options['spp_payments_enabled'])) {
                 $sanitized['spp_payments_enabled'] = 1;
             }
-            if (isset($options['spp_membership_plans'])) {
-                $sanitized['spp_membership_plans'] = sanitize_textarea_field($options['spp_membership_plans']);
+            if (isset($options['spp_require_email_verification'])) {
+                $sanitized['spp_require_email_verification'] = 1;
             }
             if (isset($options['spp_active_gateway'])) {
                 $sanitized['spp_active_gateway'] = in_array($options['spp_active_gateway'], ['stripe', 'paypal'], true)
@@ -169,7 +186,11 @@ if (!class_exists('SPP_Settings')) {
                 $sanitized['spp_paypal_sandbox'] = 1;
             }
 
-            foreach (['spp_stripe_publishable_key', 'spp_stripe_secret_key', 'spp_stripe_webhook_secret', 'spp_paypal_client_id', 'spp_paypal_secret'] as $key) {
+            foreach ([
+                'spp_stripe_publishable_key', 'spp_stripe_secret_key', 'spp_stripe_webhook_secret',
+                'spp_paypal_client_id', 'spp_paypal_secret', 'spp_paypal_webhook_id',
+                'spp_paypal_monthly_plan_id', 'spp_paypal_annual_plan_id',
+            ] as $key) {
                 if (isset($options[$key])) {
                     $sanitized[$key] = sanitize_text_field($options[$key]);
                 }

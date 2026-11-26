@@ -1,0 +1,127 @@
+.spp-player-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+    gap: 16px 20px;
+    padding: 6px 0;
+}
+
+.spp-player-field {
+    min-width: 0;
+}
+
+.spp-player-field--wide {
+    grid-column: 1 / -1;
+}
+
+.spp-player-field label {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.spp-player-field-privacy {
+    color: #50575e;
+    font-size: 12px;
+    font-weight: 400;
+}
+
+.spp-player-field input,
+.spp-player-field select,
+.spp-player-field textarea {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    box-sizing: border-box;
+}
+
+.spp-player-field[hidden],
+.spp-player-season-controls[hidden] {
+    display: none;
+}
+
+.spp-player-group > legend {
+    font-weight: 600;
+}
+
+.spp-player-season-rows {
+    display: grid;
+    gap: 10px;
+    margin: 10px 0;
+}
+
+.spp-player-season-row {
+    display: grid;
+    justify-items: start;
+    gap: 10px;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 12px;
+    border: 1px solid #dcdcde;
+    background: #f6f7f7;
+}
+
+.spp-player-season-controls {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+    align-items: end;
+    gap: 10px 14px;
+    width: 100%;
+}
+
+.spp-player-season-controls .spp-player-season-control {
+    display: grid;
+    gap: 5px;
+    margin: 0;
+}
+
+.spp-player-season-controls .spp-player-season-current {
+    min-height: 30px;
+    margin: 0;
+}
+
+.spp-player-season-current input[type="checkbox"] {
+    width: 1rem;
+}
+
+.spp-player-field .description {
+    margin-top: 5px;
+}
+
+.spp-player-media-help {
+    margin-bottom: 12px;
+}
+
+.spp-player-field .spp-player-gallery-picker {
+    margin-bottom: 8px;
+    white-space: normal;
+}
+
+.spp-player-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    gap: 10px;
+    max-width: 720px;
+    margin: 12px 0 0;
+}
+
+.spp-player-gallery[hidden] {
+    display: none;
+}
+
+.spp-player-gallery li {
+    display: grid;
+    gap: 5px;
+    margin: 0;
+}
+
+.spp-player-gallery img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    background: #f0f0f1;
+    border-radius: 3px;
+}

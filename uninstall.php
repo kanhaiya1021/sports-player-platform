@@ -1,48 +1,28 @@
 <?php
 /**
- * Uninstall Sports Player Platform
+ * Clean up Sports Player Platform after a WordPress uninstall.
  *
- * Runs when the plugin is deleted from WordPress.
+ * @package Sports_Player_Platform
  */
 
-if (!defined('WP_UNINSTALL_PLUGIN')) {
-    exit;
+if ( ! defined( 'ABSPATH' ) || ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
+	exit;
 }
+
+require_once __DIR__ . '/includes/database/class-spp-db-schema.php';
 
 global $wpdb;
 
-$settings = get_option('spp_settings', []);
-$delete_data = !empty($settings['delete_data_on_uninstall']);
-
-// Always clean up plugin options
-delete_option('spp_db_version');
-delete_option('spp_settings');
-
-// Optionally drop custom tables if explicitly enabled in settings
-if ($delete_data) {
-    $tables = [
-        'spp_players',
-        'spp_teams',
-        'spp_rankings',
-        'spp_rankings_history',
-        'spp_ranking_categories',
-        'spp_memberships',
-        'spp_conversations',
-        'spp_messages',
-        'spp_recruiting_lists',
-        'spp_recruiting_players',
-        'spp_player_interest',
-        'spp_saved_players',
-        'spp_notifications',
-        'spp_player_views',
-        'spp_payment_logs',
-        'spp_email_logs',
-    ];
-
-    foreach ($tables as $table) {
-        $table_name = $wpdb->prefix . $table;
-        $wpdb->query("DROP TABLE IF EXISTS {$table_name}"); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-    }
+$spp_settings = get_option( 'spp_settings', array() );
+if ( ! empty( $spp_settings['delete_data_on_uninstall'] ) && $wpdb->has_cap( 'identifier_placeholders' ) ) {
+	foreach ( array_reverse( array_keys( SPP_DB_Schema::definitions() ) ) as $spp_table_suffix ) {
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.DirectDatabaseQuery.SchemaChange -- Explicitly opted-in uninstall cleanup.
+		$wpdb->query( $wpdb->prepare( 'DROP TABLE IF EXISTS %i', $wpdb->prefix . 'spp_' . $spp_table_suffix ) );
+	}
 }
 
-do_action('spp_uninstalled');
+foreach ( array( 'spp_db_version', 'spp_db_phase1_conversation_cursor', 'spp_settings', 'spp_pages_version', 'spp_roles_version' ) as $spp_option ) {
+	delete_option( $spp_option );
+}
+
+do_action( 'spp_uninstalled' );

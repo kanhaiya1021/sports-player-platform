@@ -50,11 +50,14 @@ if (!class_exists('SPP_Admin')) {
         private function init_hooks(): void {
             add_action('admin_menu', [$this, 'init_admin_menu']);
             add_action('admin_enqueue_scripts', [$this, 'enqueue_scripts']);
+            add_action('wp_dashboard_setup', [$this, 'register_dashboard_widgets']);
             add_action('rest_api_init', [$this, 'register_rest_routes']);
             add_action('wp_ajax_spp_approve_profile', [$this, 'handle_approve_profile']);
             add_action('wp_ajax_spp_reject_profile', [$this, 'handle_reject_profile']);
             add_action('wp_ajax_spp_search_players', [$this, 'spp_search_players']);
             add_action('wp_ajax_nopriv_spp_search_players', [$this, 'spp_search_players']);
+            add_action('admin_post_spp_admin_update_membership', [$this, 'handle_admin_update_membership']);
+            add_action('admin_post_spp_admin_moderate_conversation', [$this, 'handle_admin_moderate_conversation']);
         }
 
         /**
@@ -102,6 +105,36 @@ if (!class_exists('SPP_Admin')) {
                 [$this, 'render_rankings_page']
             );
 
+            // Memberships submenu
+            $this->pages['memberships'] = add_submenu_page(
+                'spp-players',
+                __('Memberships', 'sports-player-platform'),
+                __('Memberships', 'sports-player-platform'),
+                'manage_options',
+                'spp-memberships',
+                [$this, 'render_memberships_page']
+            );
+
+            // Messages moderation submenu
+            $this->pages['messages'] = add_submenu_page(
+                'spp-players',
+                __('Messages', 'sports-player-platform'),
+                __('Messages', 'sports-player-platform'),
+                'manage_options',
+                'spp-messages',
+                [$this, 'render_messages_page']
+            );
+
+            // Reports submenu
+            $this->pages['reports'] = add_submenu_page(
+                'spp-players',
+                __('Reports', 'sports-player-platform'),
+                __('Reports', 'sports-player-platform'),
+                'manage_options',
+                'spp-reports',
+                [$this, 'render_reports_page']
+            );
+
             do_action('spp_admin_menu_created', $this->pages);
         }
 
@@ -116,6 +149,9 @@ if (!class_exists('SPP_Admin')) {
                 'spp-players_page_spp-profile-management',
                 'spp-players_page_spp-rankings',
                 'spp-players_page_spp-teams',
+                'spp-players_page_spp-memberships',
+                'spp-players_page_spp-messages',
+                'spp-players_page_spp-reports',
             ];
 
             // Also allow standard post edit screens (edit.php and post.php appear as page file names)
@@ -160,16 +196,25 @@ if (!class_exists('SPP_Admin')) {
             register_rest_route('spp/v1', '/players', [
                 'methods' => WP_REST_Server::READABLE,
                 'callback' => [$this, 'get_players'],
-                'permission_callback' => function() {
-                    return current_user_can('read');
-                },
+                'permission_callback' => '__return_true',
             ]);
 
             // Authenticated read/write for teams and advanced player data
             register_rest_route('spp/v1', '/teams', [
-                'methods' => ['GET', 'POST', 'PUT', 'DELETE'],
-                'callback' => [$this, 'manage_teams'],
-                'permission_callback' => 'current_user_can',
+                [
+                    'methods' => WP_REST_Server::READABLE,
+                    'callback' => [$this, 'get_teams'],
+                    'permission_callback' => static function (): bool {
+                        return current_user_can('read');
+                    },
+                ],
+                [
+                    'methods' => ['POST', 'PUT', 'DELETE'],
+                    'callback' => [$this, 'manage_teams'],
+                    'permission_callback' => static function (): bool {
+                        return current_user_can('manage_options');
+                    },
+                ],
             ]);
         }
 
@@ -182,11 +227,10 @@ if (!class_exists('SPP_Admin')) {
             // Handle search/filter
             $search = isset($_GET['s']) ? sanitize_text_field($_GET['s']) : '';
 
-            // Get published players
             $players = [];
             $players_query = new WP_Query([
                 'post_type' => 'player',
-                'post_status' => ['publish', 'spp_pending'],
+                'post_status' => ['publish', 'draft', 'pending', 'future', 'private', 'spp_pending', 'rejected'],
                 'posts_per_page' => 50,
                 's' => $search ? $search : '',
                 'no_found_rows' => true,
@@ -199,7 +243,7 @@ if (!class_exists('SPP_Admin')) {
                         'id' => get_the_ID(),
                         'title' => get_the_title(),
                         'sport' => get_post_meta(get_the_ID(), 'sport', true),
-                        'position' => get_post_meta(get_the_ID(), 'playing_position', true),
+                        'position' => SPP_Player_Profile::get(get_the_ID(), 'playing_position'),
                         'grad_year' => get_post_meta(get_the_ID(), 'graduation_year', true),
                         'status' => get_post_status(),
                     ];
@@ -246,11 +290,10 @@ if (!class_exists('SPP_Admin')) {
                                     <td><?php echo esc_html($player['position']); ?></td>
                                     <td><?php echo esc_html($player['grad_year']); ?></td>
                                     <td>
-                                        <?php if ($player['status'] === 'publish'): ?>
-                                            <span class="spp-status spp-status-published"><?php esc_html_e('Published', 'sports-player-platform'); ?></span>
-                                        <?php else: ?>
-                                            <span class="spp-status spp-status-pending"><?php esc_html_e('Pending', 'sports-player-platform'); ?></span>
-                                        <?php endif; ?>
+                                        <?php $status = get_post_status_object($player['status']); ?>
+                                        <span class="spp-status <?php echo $player['status'] === 'publish' ? 'spp-status-published' : 'spp-status-pending'; ?>">
+                                            <?php echo esc_html($status ? $status->label : $player['status']); ?>
+                                        </span>
                                     </td>
                                     <td>
                                         <a href="<?php echo esc_url(get_edit_post_link($player['id'])); ?>" class="button button-small"><?php esc_html_e('Edit', 'sports-player-platform'); ?></a>
@@ -620,6 +663,8 @@ if (!class_exists('SPP_Admin')) {
                             }
                         }
 
+                        update_option('spp_rankings_cache_version', time());
+                        delete_transient('spp_ranking_categories_active');
                         wp_redirect(admin_url('admin.php?page=spp-rankings&message=' . urlencode(__('Rankings updated successfully.', 'sports-player-platform'))));
                         wp_die();
                     }
@@ -787,22 +832,20 @@ if (!class_exists('SPP_Admin')) {
                             <tbody>
                                 <?php
                                 $ranked_players = $wpdb->get_results($wpdb->prepare(
-                                    "SELECT p.ID, p.post_title as player_name,
-                                     COALESCE(pm.meta_value, 'N/A') as position,
-                                     r.ranking_position
+                                    "SELECT p.ID, p.post_title as player_name, r.ranking_position
                                      FROM {$wpdb->posts} p
                                      LEFT JOIN {$wpdb->prefix}spp_rankings r ON p.ID = r.player_id AND r.ranking_category_id = %d
-                                     LEFT JOIN {$wpdb->prefix}postmeta pm ON p.ID = pm.post_id AND pm.meta_key = 'player_position'
                                      WHERE p.post_type = 'player' AND (p.post_status = 'publish' OR p.post_status = 'spp_pending')
                                      ORDER BY COALESCE(r.ranking_position, 999), p.post_title ASC",
                                     $category_id
                                 ));
 
+                                update_meta_cache('post', array_column($ranked_players, 'ID'));
                                 foreach ($ranked_players as $player):
                                 ?>
                                     <tr>
                                         <td><?php echo esc_html($player->player_name); ?></td>
-                                        <td><?php echo esc_html($player->position); ?></td>
+                                        <td><?php echo esc_html(SPP_Player_Profile::get($player->ID, 'playing_position') ?: __('N/A', 'sports-player-platform')); ?></td>
                                         <td>
                                             <input type="number" name="rankings[<?php echo esc_attr($player->ID); ?>]"
                                                    value="<?php echo esc_attr($player->ranking_position ?: ''); ?>"
@@ -869,58 +912,25 @@ if (!class_exists('SPP_Admin')) {
          * Handle profile approval
          */
         public function handle_approve_profile(): void {
-            check_ajax_referer('spp_ajax_nonce', 'nonce');
-
-            if (!current_user_can('edit_posts')) {
-                wp_die(__('Unauthorized', 'sports-player-platform'));
-            }
-
-            $profile_id = isset($_POST['profile_id']) ? absint($_POST['profile_id']) : 0;
-
-            if ($profile_id > 0) {
-                $post = get_post($profile_id);
-
-                if ($post && $post->post_type === 'player') {
-                    wp_update_post([
-                        'ID' => $profile_id,
-                        'post_status' => 'publish',
-                    ]);
-
-                    do_action('spp_profile_approved', $profile_id);
-                }
-            }
-
-            wp_redirect(admin_url('edit.php?post_type=player&spp_status=approved'));
-            wp_die();
+            $this->ajax_review_player_profile('publish');
         }
 
         /**
          * Handle profile rejection
          */
         public function handle_reject_profile(): void {
+            $this->ajax_review_player_profile('rejected');
+        }
+
+        private function ajax_review_player_profile(string $status): void {
             check_ajax_referer('spp_ajax_nonce', 'nonce');
 
-            if (!current_user_can('edit_posts')) {
-                wp_die(__('Unauthorized', 'sports-player-platform'));
+            $result = SPP_Public::get_instance()->review_player_profile(absint($_POST['profile_id'] ?? 0), $status);
+            if (is_wp_error($result)) {
+                wp_send_json_error(['message' => $result->get_error_message()], $result->get_error_data());
             }
 
-            $profile_id = isset($_POST['profile_id']) ? absint($_POST['profile_id']) : 0;
-
-            if ($profile_id > 0) {
-                $post = get_post($profile_id);
-
-                if ($post && $post->post_type === 'player') {
-                    wp_update_post([
-                        'ID' => $profile_id,
-                        'post_status' => 'rejected',
-                    ]);
-
-                    do_action('spp_profile_rejected', $profile_id);
-                }
-            }
-
-            wp_redirect(admin_url('edit.php?post_type=player&spp_status=rejected'));
-            wp_die();
+            wp_send_json_success(['redirect_url' => admin_url('admin.php?page=spp-profile-management&spp_status=' . $result)]);
         }
 
         /**
@@ -976,8 +986,8 @@ if (!class_exists('SPP_Admin')) {
                     $query->the_post();
                     $player_id = get_the_ID();
 
-                    $height = get_post_meta($player_id, 'player_height', true);
-                    $position = get_post_meta($player_id, 'playing_position', true);
+                    $height = SPP_Player_Profile::get($player_id, 'height');
+                    $position = SPP_Player_Profile::get($player_id, 'playing_position');
                     $grad_year = get_post_meta($player_id, 'graduation_year', true);
                     $sport = get_post_meta($player_id, 'sport', true);
 
@@ -1017,12 +1027,31 @@ if (!class_exists('SPP_Admin')) {
          * @return WP_REST_Response
          */
         public function get_players(WP_REST_Request $request): WP_REST_Response {
-            global $wpdb;
+            $query = new WP_Query([
+                'post_type' => 'player',
+                'post_status' => 'publish',
+                'has_password' => false,
+                'orderby' => ['title' => 'ASC', 'ID' => 'ASC'],
+                'paged' => max(1, (int) $request->get_param('page')),
+                'posts_per_page' => max(1, min(100, (int) ($request->get_param('per_page') ?? 20))),
+                'update_post_term_cache' => false,
+            ]);
 
-            $table_name = $wpdb->prefix . 'spp_players';
-            $players = $wpdb->get_results("SELECT * FROM $table_name ORDER BY player_name ASC");
+            $players = [];
+            foreach ($query->posts as $player) {
+                $players[] = [
+                    'id' => $player->ID,
+                    'player_name' => get_the_title($player),
+                    'sport' => spp_get_player_meta($player->ID, 'sport', ''),
+                    'position' => spp_get_player_meta($player->ID, 'playing_position', ''),
+                    'url' => get_permalink($player),
+                ];
+            }
 
-            return new WP_REST_Response($players, 200);
+            $response = new WP_REST_Response($players, 200);
+            $response->header('X-WP-Total', (int) $query->found_posts);
+            $response->header('X-WP-TotalPages', (int) $query->max_num_pages);
+            return $response;
         }
 
         /**
@@ -1051,30 +1080,42 @@ if (!class_exists('SPP_Admin')) {
          * @return WP_REST_Response
          */
         public function manage_teams(WP_REST_Request $request): WP_REST_Response {
-            if (!current_user_can('edit_posts')) {
-                return new WP_REST_Response(['error' => 'Unauthorized: Edit capability required'], 401);
+            if (!current_user_can('manage_options')) {
+                return new WP_REST_Response(['error' => 'Unauthorized'], 403);
             }
 
+            global $wpdb;
+            $table = $wpdb->prefix . 'spp_teams';
             $action = $request->get_param('action');
+            $team_id = absint($request->get_param('id'));
+            $team_name = sanitize_text_field($request->get_param('team_name'));
+            $sport = sanitize_text_field($request->get_param('sport'));
+            $location = sanitize_text_field($request->get_param('location'));
+            $founded = absint($request->get_param('founded')) ?: null;
+
+            if (in_array($action, ['update', 'delete'], true)) {
+                if (!$team_id) {
+                    return new WP_REST_Response(['error' => 'Team ID is required'], 400);
+                }
+                if (!$wpdb->get_var($wpdb->prepare("SELECT id FROM $table WHERE id = %d", $team_id))) {
+                    return new WP_REST_Response(['error' => 'Team not found'], 404);
+                }
+            }
 
             switch ($action) {
                 case 'create':
-                    $team_name = $request->get_param('team_name');
-                    $sport = $request->get_param('sport');
-                    $location = $request->get_param('location');
-                    $founded = $request->get_param('founded');
-
                     if (empty($team_name) || empty($sport)) {
                         return new WP_REST_Response(['error' => 'team_name and sport are required'], 400);
                     }
 
-                    global $wpdb;
-                    $wpdb->insert($wpdb->prefix . 'spp_teams', [
+                    if (!$wpdb->insert($table, [
                         'team_name' => $team_name,
                         'sport' => $sport,
                         'location' => $location ?? '',
                         'founded' => $founded,
-                    ]);
+                    ])) {
+                        return new WP_REST_Response(['error' => 'Could not create team'], 500);
+                    }
 
                     $team_id = $wpdb->insert_id;
 
@@ -1086,18 +1127,17 @@ if (!class_exists('SPP_Admin')) {
                     ], 201);
 
                 case 'update':
-                    $team_id = $request->get_param('id');
-                    $team_name = $request->get_param('team_name');
-                    $sport = $request->get_param('sport');
-
-                    if (empty($team_id) || empty($team_name)) {
-                        return new WP_REST_Response(['error' => 'team_id and team_name are required'], 400);
+                    if ($team_name === '') {
+                        return new WP_REST_Response(['error' => 'Team name is required'], 400);
                     }
 
-                    $wpdb->update($wpdb->prefix . 'spp_teams', [
-                        'team_name' => $team_name,
-                        'sport' => $sport,
-                    ], ['id' => $team_id]);
+                    $fields = ['team_name' => $team_name];
+                    if ($request->has_param('sport') && $sport !== '') {
+                        $fields['sport'] = $sport;
+                    }
+                    if ($wpdb->update($table, $fields, ['id' => $team_id]) === false) {
+                        return new WP_REST_Response(['error' => 'Could not update team'], 500);
+                    }
 
                     return new WP_REST_Response([
                         'id' => $team_id,
@@ -1106,13 +1146,9 @@ if (!class_exists('SPP_Admin')) {
                     ], 200);
 
                 case 'delete':
-                    $team_id = $request->get_param('id');
-
-                    if (empty($team_id)) {
-                        return new WP_REST_Response(['error' => 'team_id is required'], 400);
+                    if (!$wpdb->delete($table, ['id' => $team_id])) {
+                        return new WP_REST_Response(['error' => 'Could not delete team'], 500);
                     }
-
-                    $wpdb->delete($wpdb->prefix . 'spp_teams', ['id' => $team_id]);
 
                     return new WP_REST_Response([
                         'id' => $team_id,
@@ -1122,6 +1158,383 @@ if (!class_exists('SPP_Admin')) {
                 default:
                     return new WP_REST_Response(['error' => 'Invalid action'], 400);
             }
+        }
+
+        /**
+         * Register WordPress dashboard widgets for SPP stats.
+         */
+        public function register_dashboard_widgets(): void {
+            if (!current_user_can('manage_options')) {
+                return;
+            }
+
+            wp_add_dashboard_widget(
+                'spp_pending_profiles_widget',
+                __('SPP: Pending Profile Approvals', 'sports-player-platform'),
+                [$this, 'render_pending_profiles_widget']
+            );
+
+            wp_add_dashboard_widget(
+                'spp_new_members_widget',
+                __('SPP: New Members This Week', 'sports-player-platform'),
+                [$this, 'render_new_members_widget']
+            );
+        }
+
+        /**
+         * Render dashboard widget: Pending Profile Approvals.
+         */
+        public function render_pending_profiles_widget(): void {
+            $counts = wp_count_posts('player');
+            $pending_count = isset($counts->spp_pending) ? (int) $counts->spp_pending : 0;
+            $published_count = isset($counts->publish) ? (int) $counts->publish : 0;
+
+            echo '<p><strong>' . esc_html__('Pending Approvals:', 'sports-player-platform') . '</strong> ' . absint($pending_count) . '</p>';
+            echo '<p><strong>' . esc_html__('Published Players:', 'sports-player-platform') . '</strong> ' . absint($published_count) . '</p>';
+            echo '<p><a href="' . esc_url(admin_url('admin.php?page=spp-profile-management')) . '" class="button button-primary">' . esc_html__('Review Profiles', 'sports-player-platform') . '</a></p>';
+        }
+
+        /**
+         * Render dashboard widget: New Members This Week.
+         */
+        public function render_new_members_widget(): void {
+            global $wpdb;
+
+            $since = gmdate('Y-m-d H:i:s', strtotime('-7 days'));
+            $new_users = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->users} WHERE user_registered >= %s",
+                $since
+            ));
+
+            $memberships_table = $wpdb->prefix . 'spp_memberships';
+            $active_paid = (int) $wpdb->get_var(
+                "SELECT COUNT(*) FROM {$memberships_table} WHERE status = 'active' AND type IN ('monthly', 'annual')"
+            );
+
+            echo '<p><strong>' . esc_html__('New Signups (7 Days):', 'sports-player-platform') . '</strong> ' . absint($new_users) . '</p>';
+            echo '<p><strong>' . esc_html__('Active Paid Memberships:', 'sports-player-platform') . '</strong> ' . absint($active_paid) . '</p>';
+            echo '<p>';
+            echo '<a href="' . esc_url(admin_url('admin.php?page=spp-memberships')) . '" class="button">' . esc_html__('Manage Memberships', 'sports-player-platform') . '</a> ';
+            echo '<a href="' . esc_url(admin_url('admin.php?page=spp-reports')) . '" class="button">' . esc_html__('View Reports', 'sports-player-platform') . '</a>';
+            echo '</p>';
+        }
+
+        /**
+         * Render Memberships admin page.
+         */
+        public function render_memberships_page(): void {
+            if (!current_user_can('manage_options')) {
+                wp_die(esc_html__('Unauthorized', 'sports-player-platform'));
+            }
+
+            global $wpdb;
+            $table = $wpdb->prefix . 'spp_memberships';
+
+            $search = isset($_GET['s']) ? sanitize_text_field(wp_unslash($_GET['s'])) : '';
+            $plan_filter = isset($_GET['plan']) ? sanitize_key(wp_unslash($_GET['plan'])) : '';
+            $status_filter = isset($_GET['status']) ? sanitize_key(wp_unslash($_GET['status'])) : '';
+
+            $notice = '';
+            $notice_type = 'success';
+            if (isset($_GET['spp_notice'])) {
+                $notice_key = sanitize_key(wp_unslash($_GET['spp_notice']));
+                $messages = [
+                    'updated' => __('Membership updated successfully.', 'sports-player-platform'),
+                    'extended' => __('Membership expiry extended by 30 days.', 'sports-player-platform'),
+                    'cancelled' => __('Membership cancelled.', 'sports-player-platform'),
+                    'error' => __('Could not update membership.', 'sports-player-platform'),
+                ];
+                if (isset($messages[$notice_key])) {
+                    $notice = $messages[$notice_key];
+                    $notice_type = $notice_key === 'error' ? 'error' : 'success';
+                }
+            }
+
+            $where = ['1=1'];
+            $params = [];
+
+            if ($search !== '') {
+                $like = '%' . $wpdb->esc_like($search) . '%';
+                $where[] = '(u.user_login LIKE %s OR u.user_email LIKE %s OR u.display_name LIKE %s)';
+                $params[] = $like;
+                $params[] = $like;
+                $params[] = $like;
+            }
+            if ($plan_filter !== '') {
+                $where[] = 'm.type = %s';
+                $params[] = $plan_filter;
+            }
+            if ($status_filter !== '') {
+                $where[] = 'm.status = %s';
+                $params[] = $status_filter;
+            }
+
+            $where_sql = implode(' AND ', $where);
+            $sql = "SELECT m.*, u.user_login, u.user_email, u.display_name
+                    FROM {$table} m
+                    INNER JOIN {$wpdb->users} u ON u.ID = m.user_id
+                    WHERE {$where_sql}
+                    ORDER BY m.id DESC
+                    LIMIT 100";
+
+            $memberships = $params
+                ? $wpdb->get_results($wpdb->prepare($sql, ...$params), ARRAY_A)
+                : $wpdb->get_results($sql, ARRAY_A);
+
+            include SPP_PLUGIN_DIR . 'admin/views/memberships.php';
+        }
+
+        /**
+         * Handle admin membership update/extend/cancel actions.
+         */
+        public function handle_admin_update_membership(): void {
+            if (!current_user_can('manage_options')) {
+                wp_die(esc_html__('Unauthorized', 'sports-player-platform'));
+            }
+            check_admin_referer('spp_admin_membership_action');
+
+            global $wpdb;
+            $table = $wpdb->prefix . 'spp_memberships';
+            $membership_id = isset($_POST['membership_id']) ? absint($_POST['membership_id']) : 0;
+            $user_id = isset($_POST['user_id']) ? absint($_POST['user_id']) : 0;
+            $sub_action = isset($_POST['sub_action']) ? sanitize_key(wp_unslash($_POST['sub_action'])) : '';
+            $redirect_base = admin_url('admin.php?page=spp-memberships');
+
+            if (!$membership_id || !$user_id) {
+                wp_safe_redirect(add_query_arg('spp_notice', 'error', $redirect_base));
+                exit;
+            }
+
+            if ($sub_action === 'change_plan') {
+                $new_plan = isset($_POST['new_plan']) ? sanitize_key(wp_unslash($_POST['new_plan'])) : 'free';
+                if (!in_array($new_plan, ['free', 'monthly', 'annual'], true)) {
+                    wp_safe_redirect(add_query_arg('spp_notice', 'error', $redirect_base));
+                    exit;
+                }
+                $expires_at = null;
+                if ($new_plan === 'monthly') {
+                    $expires_at = gmdate('Y-m-d H:i:s', strtotime('+1 month'));
+                } elseif ($new_plan === 'annual') {
+                    $expires_at = gmdate('Y-m-d H:i:s', strtotime('+1 year'));
+                }
+
+                $updated = $wpdb->update(
+                    $table,
+                    [
+                        'type' => $new_plan,
+                        'status' => 'active',
+                        'expires_at' => $expires_at,
+                        'payment_method' => $new_plan === 'free' ? null : 'manual',
+                    ],
+                    ['id' => $membership_id],
+                    ['%s', '%s', '%s', '%s'],
+                    ['%d']
+                );
+                $notice = $updated !== false ? 'updated' : 'error';
+            } elseif ($sub_action === 'extend_expiry') {
+                $row = $wpdb->get_row($wpdb->prepare("SELECT expires_at FROM {$table} WHERE id = %d", $membership_id), ARRAY_A);
+                $base_time = (!empty($row['expires_at']) && strtotime($row['expires_at']) > time())
+                    ? strtotime($row['expires_at'])
+                    : time();
+                $new_expiry = gmdate('Y-m-d H:i:s', strtotime('+30 days', $base_time));
+
+                $updated = $wpdb->update(
+                    $table,
+                    ['expires_at' => $new_expiry, 'status' => 'active'],
+                    ['id' => $membership_id],
+                    ['%s', '%s'],
+                    ['%d']
+                );
+                $notice = $updated !== false ? 'extended' : 'error';
+            } elseif ($sub_action === 'cancel') {
+                $updated = $wpdb->update(
+                    $table,
+                    ['status' => 'cancelled'],
+                    ['id' => $membership_id],
+                    ['%s'],
+                    ['%d']
+                );
+                $notice = $updated !== false ? 'cancelled' : 'error';
+            } else {
+                $notice = 'error';
+            }
+
+            wp_safe_redirect(add_query_arg('spp_notice', $notice, $redirect_base));
+            exit;
+        }
+
+        /**
+         * Render Messages Moderation admin page.
+         */
+        public function render_messages_page(): void {
+            if (!current_user_can('manage_options')) {
+                wp_die(esc_html__('Unauthorized', 'sports-player-platform'));
+            }
+
+            global $wpdb;
+            $conv_table = $wpdb->prefix . 'spp_conversations';
+            $msg_table = $wpdb->prefix . 'spp_messages';
+
+            $search = isset($_GET['s']) ? sanitize_text_field(wp_unslash($_GET['s'])) : '';
+            $archived_filter = isset($_GET['archived']) ? sanitize_text_field(wp_unslash($_GET['archived'])) : '';
+
+            $notice = '';
+            $notice_type = 'success';
+            if (isset($_GET['spp_notice'])) {
+                $notice_key = sanitize_key(wp_unslash($_GET['spp_notice']));
+                $messages = [
+                    'flagged' => __('Conversation flagged and archived.', 'sports-player-platform'),
+                    'unflagged' => __('Conversation restored to active.', 'sports-player-platform'),
+                    'deleted' => __('Conversation and messages deleted.', 'sports-player-platform'),
+                    'error' => __('Moderation action failed.', 'sports-player-platform'),
+                ];
+                if (isset($messages[$notice_key])) {
+                    $notice = $messages[$notice_key];
+                    $notice_type = $notice_key === 'error' ? 'error' : 'success';
+                }
+            }
+
+            $where = ['1=1'];
+            $params = [];
+
+            if ($search !== '') {
+                $like = '%' . $wpdb->esc_like($search) . '%';
+                $where[] = '(c.subject LIKE %s OR EXISTS (SELECT 1 FROM ' . $msg_table . ' m2 WHERE m2.conversation_id = c.id AND m2.message LIKE %s))';
+                $params[] = $like;
+                $params[] = $like;
+            }
+            if ($archived_filter === '0' || $archived_filter === '1') {
+                $where[] = 'c.is_archived = %d';
+                $params[] = (int) $archived_filter;
+            }
+
+            $where_sql = implode(' AND ', $where);
+            $sql = "SELECT c.*,
+                        (SELECT COUNT(*) FROM {$msg_table} m WHERE m.conversation_id = c.id AND m.is_deleted = 0) AS message_count,
+                        (SELECT m3.message FROM {$msg_table} m3 WHERE m3.conversation_id = c.id AND m3.is_deleted = 0 ORDER BY m3.id DESC LIMIT 1) AS last_message
+                    FROM {$conv_table} c
+                    WHERE {$where_sql}
+                    ORDER BY c.updated_at DESC
+                    LIMIT 100";
+
+            $conversations = $params
+                ? $wpdb->get_results($wpdb->prepare($sql, ...$params), ARRAY_A)
+                : $wpdb->get_results($sql, ARRAY_A);
+
+            foreach ($conversations as &$conv) {
+                $ids = array_filter(array_map('absint', explode(',', (string) $conv['participant_ids'])));
+                $names = [];
+                foreach ($ids as $uid) {
+                    $u = get_userdata($uid);
+                    $names[] = $u ? $u->display_name : ('#' . $uid);
+                }
+                $conv['participants_label'] = implode(', ', $names);
+            }
+            unset($conv);
+
+            include SPP_PLUGIN_DIR . 'admin/views/messages.php';
+        }
+
+        /**
+         * Handle admin conversation moderation actions.
+         */
+        public function handle_admin_moderate_conversation(): void {
+            if (!current_user_can('manage_options')) {
+                wp_die(esc_html__('Unauthorized', 'sports-player-platform'));
+            }
+            check_admin_referer('spp_admin_message_action');
+
+            global $wpdb;
+            $conv_table = $wpdb->prefix . 'spp_conversations';
+            $msg_table = $wpdb->prefix . 'spp_messages';
+            $conv_id = isset($_POST['conversation_id']) ? absint($_POST['conversation_id']) : 0;
+            $sub_action = isset($_POST['sub_action']) ? sanitize_key(wp_unslash($_POST['sub_action'])) : '';
+            $redirect_base = admin_url('admin.php?page=spp-messages');
+
+            if (!$conv_id) {
+                wp_safe_redirect(add_query_arg('spp_notice', 'error', $redirect_base));
+                exit;
+            }
+
+            if ($sub_action === 'flag') {
+                $wpdb->update($conv_table, ['is_archived' => 1], ['id' => $conv_id], ['%d'], ['%d']);
+                $notice = 'flagged';
+            } elseif ($sub_action === 'unflag') {
+                $wpdb->update($conv_table, ['is_archived' => 0], ['id' => $conv_id], ['%d'], ['%d']);
+                $notice = 'unflagged';
+            } elseif ($sub_action === 'delete') {
+                $wpdb->delete($msg_table, ['conversation_id' => $conv_id], ['%d']);
+                $wpdb->delete($conv_table, ['id' => $conv_id], ['%d']);
+                $notice = 'deleted';
+            } else {
+                $notice = 'error';
+            }
+
+            wp_safe_redirect(add_query_arg('spp_notice', $notice, $redirect_base));
+            exit;
+        }
+
+        /**
+         * Render Reports admin page.
+         */
+        public function render_reports_page(): void {
+            if (!current_user_can('manage_options')) {
+                wp_die(esc_html__('Unauthorized', 'sports-player-platform'));
+            }
+
+            global $wpdb;
+            $payments_table = $wpdb->prefix . 'spp_payment_logs';
+            $memberships_table = $wpdb->prefix . 'spp_memberships';
+            $views_table = $wpdb->prefix . 'spp_player_views';
+            $messages_table = $wpdb->prefix . 'spp_messages';
+            $conversations_table = $wpdb->prefix . 'spp_conversations';
+
+            $month_start = gmdate('Y-m-01 00:00:00');
+            $days_7_ago = gmdate('Y-m-d H:i:s', strtotime('-7 days'));
+            $days_14_ago = gmdate('Y-m-d H:i:s', strtotime('-14 days'));
+            $days_30_ago = gmdate('Y-m-d H:i:s', strtotime('-30 days'));
+
+            $reports = [
+                'total_revenue' => (float) $wpdb->get_var("SELECT COALESCE(SUM(amount), 0) FROM {$payments_table} WHERE status = 'completed'"),
+                'month_revenue' => (float) $wpdb->get_var($wpdb->prepare(
+                    "SELECT COALESCE(SUM(amount), 0) FROM {$payments_table} WHERE status = 'completed' AND created_at >= %s",
+                    $month_start
+                )),
+                'active_paid' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {$memberships_table} WHERE status = 'active' AND type IN ('monthly', 'annual')"),
+                'active_free' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {$memberships_table} WHERE status = 'active' AND type = 'free'"),
+                'signups_7d' => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->users} WHERE user_registered >= %s", $days_7_ago)),
+                'signups_30d' => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->users} WHERE user_registered >= %s", $days_30_ago)),
+                'messages_30d' => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$messages_table} WHERE is_deleted = 0 AND sent_at >= %s", $days_30_ago)),
+                'total_conversations' => (int) $wpdb->get_var("SELECT COUNT(*) FROM {$conversations_table}"),
+                'top_viewed_players' => $wpdb->get_results($wpdb->prepare(
+                    "SELECT v.player_id, p.post_title, COUNT(*) AS view_count
+                     FROM {$views_table} v
+                     LEFT JOIN {$wpdb->posts} p ON p.ID = v.player_id
+                     WHERE v.viewed_at >= %s
+                     GROUP BY v.player_id
+                     ORDER BY view_count DESC
+                     LIMIT 10",
+                    $days_30_ago
+                ), ARRAY_A),
+                'messages_per_day' => $wpdb->get_results($wpdb->prepare(
+                    "SELECT DATE(sent_at) AS msg_date, COUNT(*) AS msg_count
+                     FROM {$messages_table}
+                     WHERE is_deleted = 0 AND sent_at >= %s
+                     GROUP BY DATE(sent_at)
+                     ORDER BY msg_date DESC",
+                    $days_14_ago
+                ), ARRAY_A),
+                'recent_payments' => $wpdb->get_results(
+                    "SELECT l.*, u.user_email
+                     FROM {$payments_table} l
+                     LEFT JOIN {$wpdb->users} u ON u.ID = l.user_id
+                     ORDER BY l.id DESC
+                     LIMIT 20",
+                    ARRAY_A
+                ),
+            ];
+
+            include SPP_PLUGIN_DIR . 'admin/views/reports.php';
         }
     }
 }
