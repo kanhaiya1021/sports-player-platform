@@ -14,6 +14,12 @@ $is_player  = current_user_can('edit_own_profile') || current_user_can('manage_o
 $is_coach   = current_user_can('create_recruiting_list') || current_user_can('manage_options');
 $can_save   = current_user_can('view_saved_players') || current_user_can('manage_options');
 $logout_url = wp_nonce_url(add_query_arg(['spp_logout' => '1'], home_url('/')), 'spp_logout_nonce');
+
+// Unread message count for the nav badge (only when logged in).
+$nav_unread = 0;
+if (is_user_logged_in() && class_exists('SPP_Messaging')) {
+    $nav_unread = SPP_Messaging::get_instance()->get_unread_count(get_current_user_id());
+}
 ?>
 <nav class="spp-dashboard-nav" aria-label="<?php esc_attr_e('Dashboard Navigation', 'sports-player-platform'); ?>">
     <a href="<?php echo esc_url(home_url('/dashboard/')); ?>" class="spp-nav-item <?php echo $active_tab === 'overview' ? 'is-active' : ''; ?>">
@@ -40,6 +46,7 @@ $logout_url = wp_nonce_url(add_query_arg(['spp_logout' => '1'], home_url('/')), 
 
     <a href="<?php echo esc_url(home_url('/dashboard/messages/')); ?>" class="spp-nav-item <?php echo $active_tab === 'messages' ? 'is-active' : ''; ?>">
         <?php esc_html_e('Messages', 'sports-player-platform'); ?>
+        <span id="spp-nav-unread-badge" class="spp-nav-badge"<?php echo $nav_unread > 0 ? '' : ' style="display:none;"'; ?>><?php echo esc_html($nav_unread); ?></span>
     </a>
 
     <a href="<?php echo esc_url(home_url('/dashboard/membership/')); ?>" class="spp-nav-item <?php echo $active_tab === 'membership' ? 'is-active' : ''; ?>">

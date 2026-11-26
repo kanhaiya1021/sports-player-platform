@@ -1,0 +1,17 @@
+{
+  "name": "spp-websocket-server",
+  "version": "1.0.0",
+  "description": "Standalone WebSocket relay server for the Sports Player Platform real-time messaging feature.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "license": "GPL-2.0-or-later"
+}

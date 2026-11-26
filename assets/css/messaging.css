@@ -1,0 +1,206 @@
+/* Sports Player Platform — Messaging / real-time UI */
+
+.spp-messages-wrap {
+    --spp-msg-bg-sent: #e7f1ff;
+    --spp-msg-bg-recv: #f1f3f5;
+}
+
+.spp-messages-layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 20px;
+    margin-top: 20px;
+    align-items: start;
+}
+
+@media (max-width: 768px) {
+    .spp-messages-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Conversation list */
+.spp-conversation-list {
+    background: #fff;
+    border: 1px solid #e2e4e7;
+    border-radius: 10px;
+    padding: 12px;
+}
+
+.spp-conversation-list h2 {
+    font-size: 16px;
+    margin: 4px 8px 12px;
+}
+
+.spp-conversation-list ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.spp-conversation-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    text-decoration: none;
+    color: #1d2939;
+    border: 1px solid transparent;
+}
+
+.spp-conversation-item:hover {
+    background: #f6f8fa;
+}
+
+.spp-conversation-item.is-active {
+    background: #eef4ff;
+    border-color: #c7dbff;
+}
+
+.spp-conversation-subject {
+    font-weight: 600;
+}
+
+.spp-conversation-meta {
+    font-size: 12px;
+    color: #667085;
+}
+
+.spp-conv-badge {
+    align-self: flex-end;
+    background: #d92d20;
+    color: #fff;
+    border-radius: 999px;
+    font-size: 11px;
+    line-height: 1;
+    padding: 3px 7px;
+    margin-top: -18px;
+}
+
+/* Thread */
+.spp-conversation-thread {
+    background: #fff;
+    border: 1px solid #e2e4e7;
+    border-radius: 10px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    min-height: 420px;
+}
+
+.spp-thread-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.spp-thread-header h2 {
+    font-size: 18px;
+    margin: 0;
+}
+
+.spp-thread-messages {
+    flex: 1;
+    overflow-y: auto;
+    max-height: 460px;
+    padding: 8px;
+    background: #fbfcfd;
+    border: 1px solid #eef0f2;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.spp-message {
+    max-width: 80%;
+    padding: 8px 12px;
+    border-radius: 12px;
+    background: var(--spp-msg-bg-recv);
+}
+
+.spp-message-sent {
+    align-self: flex-end;
+    background: var(--spp-msg-bg-sent);
+}
+
+.spp-message-sender {
+    display: block;
+    font-size: 12px;
+    color: #475467;
+    margin-bottom: 2px;
+}
+
+.spp-message-body {
+    margin: 0;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.spp-message-time {
+    display: block;
+    margin-top: 4px;
+    font-size: 11px;
+    color: #98a2b3;
+    text-align: right;
+}
+
+.spp-no-messages {
+    color: #667085;
+    font-style: italic;
+}
+
+/* Reply form */
+.spp-reply-form {
+    margin-top: 12px;
+}
+
+.spp-reply-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.spp-realtime-status {
+    font-size: 12px;
+    color: #667085;
+}
+
+.spp-status-connected {
+    color: #12b76a;
+}
+
+.spp-status-offline {
+    color: #b54708;
+}
+
+.spp-status-connecting {
+    color: #175cd3;
+}
+
+.spp-thread-empty {
+    text-align: center;
+    color: #667085;
+    margin: auto 0;
+}
+
+/* Nav unread badge */
+.spp-nav-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    margin-left: 6px;
+    background: #d92d20;
+    color: #fff;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    vertical-align: middle;
+}
