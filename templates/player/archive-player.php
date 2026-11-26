@@ -38,7 +38,7 @@ $initial_query = new WP_Query([
 
                 <div class="spp-filter-group">
                     <label for="spp_dir_sport"><?php esc_html_e('Sport', 'sports-player-platform'); ?></label>
-                    <select id="spp_dir_sport" name="sport">
+                    <select id="spp_dir_sport" name="sport" class="spp-filter-sport">
                         <option value=""><?php esc_html_e('All Sports', 'sports-player-platform'); ?></option>
                         <?php foreach ($sports as $sport): ?>
                             <option value="<?php echo esc_attr($sport); ?>"><?php echo esc_html($sport); ?></option>
@@ -48,7 +48,7 @@ $initial_query = new WP_Query([
 
                 <div class="spp-filter-group">
                     <label for="spp_dir_position"><?php esc_html_e('Position', 'sports-player-platform'); ?></label>
-                    <select id="spp_dir_position" name="position">
+                    <select id="spp_dir_position" name="position" class="spp-filter-position">
                         <option value=""><?php esc_html_e('All Positions', 'sports-player-platform'); ?></option>
                         <?php foreach ($positions as $pos): ?>
                             <option value="<?php echo esc_attr($pos); ?>"><?php echo esc_html($pos); ?></option>
@@ -57,38 +57,23 @@ $initial_query = new WP_Query([
                 </div>
 
                 <div class="spp-filter-group">
-                    <label for="spp_dir_grad_min"><?php esc_html_e('Graduation Year Range', 'sports-player-platform'); ?></label>
-                    <div class="spp-range-inputs">
-                        <input type="number" id="spp_dir_grad_min" name="grad_min" placeholder="2024" min="2000" max="2035">
-                        <span>–</span>
-                        <input type="number" id="spp_dir_grad_max" name="grad_max" placeholder="2030" min="2000" max="2035">
-                    </div>
-                </div>
-
-                <div class="spp-filter-group">
-                    <label for="spp_dir_location"><?php esc_html_e('Location', 'sports-player-platform'); ?></label>
-                    <input type="text" id="spp_dir_location" name="location" placeholder="<?php esc_attr_e('City or State', 'sports-player-platform'); ?>">
-                </div>
-
-                <div class="spp-filter-group">
-                    <label for="spp_dir_height_min"><?php esc_html_e('Height Range (cm)', 'sports-player-platform'); ?></label>
-                    <div class="spp-range-inputs">
-                        <input type="number" id="spp_dir_height_min" name="height_min" placeholder="150" min="100" max="240">
-                        <span>–</span>
-                        <input type="number" id="spp_dir_height_max" name="height_max" placeholder="210" min="100" max="240">
-                    </div>
-                </div>
-
-                <div class="spp-filter-group">
-                    <label for="spp_dir_sort"><?php esc_html_e('Sort By', 'sports-player-platform'); ?></label>
-                    <select id="spp_dir_sort" name="orderby">
-                        <option value="recent"><?php esc_html_e('Recently Added', 'sports-player-platform'); ?></option>
-                        <option value="name"><?php esc_html_e('Name (A–Z)', 'sports-player-platform'); ?></option>
-                        <option value="grad_year"><?php esc_html_e('Graduation Year', 'sports-player-platform'); ?></option>
+                    <label for="spp_dir_grad_year"><?php esc_html_e('Graduation Year', 'sports-player-platform'); ?></label>
+                    <select id="spp_dir_grad_year" name="grad_year" class="spp-filter-grad-year">
+                        <option value=""><?php esc_html_e('All Years', 'sports-player-platform'); ?></option>
+                        <?php for ($year = 2024; $year <= 2027; $year++): ?>
+                            <option value="<?php echo esc_attr($year); ?>"><?php echo esc_html($year); ?></option>
+                        <?php endfor; ?>
                     </select>
                 </div>
 
-                <button type="button" id="spp-dir-reset" class="spp-btn-secondary" style="width:100%;">
+                <div class="spp-filter-group">
+                    <label for="spp_dir_ranking"><?php esc_html_e('Ranking', 'sports-player-platform'); ?></label>
+                    <select id="spp_dir_ranking" name="ranking" class="spp-filter-ranking">
+                        <option value=""><?php esc_html_e('All Rankings', 'sports-player-platform'); ?></option>
+                    </select>
+                </div>
+
+                <button type="button" id="spp-dir-reset" class="spp-btn-secondary spp-reset-filters" style="width:100%;">
                     <?php esc_html_e('Reset Filters', 'sports-player-platform'); ?>
                 </button>
             </form>

@@ -14,6 +14,19 @@ jQuery(document).ready(function($) {
         }, 300);
     }
 
+    // Search input with debounce
+    $('#spp_dir_search').on('input', function() {
+        if (spp_search_timeout) {
+            clearTimeout(spp_search_timeout);
+        }
+        spp_search_timeout = setTimeout(spp_search_players, 300);
+    });
+
+    // Sport filter change
+    $(document).on('change', '.spp-filter-sport', function() {
+        spp_search_players();
+    });
+
     // Position filter change
     $(document).on('change', '.spp-filter-position', function() {
         spp_search_players();
@@ -31,12 +44,16 @@ jQuery(document).ready(function($) {
 
     // Reset filters
     $(document).on('click', '.spp-reset-filters', function() {
-        $('.spp-filter-position').val('').trigger('change');
-        $('.spp-filter-grad-year').val('').trigger('change');
-        $('.spp-filter-ranking').val('').trigger('change');
+        $('#spp_dir_search').val('');
+        $('.spp-filter-sport').val('').trigger('change');
+        $('.spp-filter-position').val('').prop('selected', true).trigger('change');
+        $('.spp-filter-grad-year').val('').prop('selected', true).trigger('change');
+        $('.spp-filter-ranking').val('').prop('selected', true).trigger('change');
     });
 
     function spp_search_players() {
+        var search = $('#spp_dir_search').val();
+        var sport = $('.spp-filter-sport').val();
         var position = $('.spp-filter-position').val();
         var grad_year = $('.spp-filter-grad-year').val();
         var ranking = $('.spp-filter-ranking').val();
@@ -46,6 +63,8 @@ jQuery(document).ready(function($) {
             type: 'POST',
             data: {
                 action: 'spp_search_players',
+                search: search,
+                sport: sport,
                 playing_position: position,
                 graduation_year: grad_year,
                 ranking: ranking,

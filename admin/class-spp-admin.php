@@ -937,7 +937,7 @@ if (!class_exists('SPP_Admin')) {
          * AJAX search players for public directory
          */
         public function spp_search_players(): void {
-            check_ajax_referer('spp_ajax_nonce', 'nonce');
+            check_ajax_referer('spp_public_nonce', 'nonce');
 
             if (!current_user_can('read')) {
                 wp_die(json_encode(['error' => 'Unauthorized']), 401);
@@ -946,9 +946,11 @@ if (!class_exists('SPP_Admin')) {
             global $wpdb;
 
             // Build query arguments
-            $position = isset($_POST['playing_position']) ? sanitize_text_field($_POST['playing_position']) : '';
-            $grad_year = isset($_POST['graduation_year']) ? absint($_POST['graduation_year']) : 0;
-            $ranking = isset($_POST['ranking']) ? absint($_POST['ranking']) : 0;
+            $search     = sanitize_text_field(wp_unslash($_POST['search'] ?? ''));
+            $sport      = sanitize_text_field(wp_unslash($_POST['sport'] ?? ''));
+            $position   = sanitize_text_field(wp_unslash($_POST['playing_position'] ?? ''));
+            $grad_year  = absint($_POST['graduation_year'] ?? 0);
+            $ranking    = absint($_POST['ranking'] ?? 0);
 
             $args = [
                 'post_type' => 'player',
@@ -957,6 +959,16 @@ if (!class_exists('SPP_Admin')) {
                 'no_found_rows' => true,
                 'cache_results' => false,
             ];
+
+            if ($search !== '') {
+                $args['s'] = $search;
+            }
+
+            $meta_query = [];
+
+            if ($sport !== '') {
+                $meta_query[] = ['key' => 'sport', 'value' => $sport, 'compare' => '='];
+            }
 
             if (!empty($position)) {
                 $args['meta_key'] = 'playing_position';
@@ -974,6 +986,11 @@ if (!class_exists('SPP_Admin')) {
                 $args['meta_key'] = 'spp_ranking';
                 $args['meta_value'] = $ranking;
                 $args['meta_compare'] = '=';
+            }
+
+            if (!empty($meta_query)) {
+                $meta_query['relation'] = 'AND';
+                $args['meta_query'] = $meta_query;
             }
 
             $query = new WP_Query($args);

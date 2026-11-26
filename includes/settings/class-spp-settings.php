@@ -158,6 +158,41 @@ if (!class_exists('SPP_Settings')) {
                     'label' => $description,
                 ]);
             }
+
+            // ---- Real-Time WebSocket Messaging Section ----
+            add_settings_section(
+                'spp_websocket_section',
+                __('Real-Time Messaging (WebSocket)', 'sports-player-platform'),
+                [$this, 'render_websocket_section_intro'],
+                'spp-settings'
+            );
+
+            add_settings_field(
+                'spp_ws_enabled',
+                __('Enable WebSocket', 'sports-player-platform'),
+                [$this, 'render_checkbox_field'],
+                'spp-settings',
+                'spp_websocket_section',
+                ['option' => 'spp_ws_enabled', 'label' => __('Enable real-time push messaging via a WebSocket server.', 'sports-player-platform')]
+            );
+
+            add_settings_field(
+                'spp_ws_url',
+                __('WebSocket Server URL', 'sports-player-platform'),
+                [$this, 'render_text_field'],
+                'spp-settings',
+                'spp_websocket_section',
+                ['option' => 'spp_ws_url', 'type' => 'url', 'label' => __('e.g. wss://realtime.example.com or ws://localhost:8080', 'sports-player-platform')]
+            );
+
+            add_settings_field(
+                'spp_ws_secret',
+                __('Shared HMAC Secret', 'sports-player-platform'),
+                [$this, 'render_text_field'],
+                'spp-settings',
+                'spp_websocket_section',
+                ['option' => 'spp_ws_secret', 'type' => 'password', 'label' => __('Shared secret used to sign auth tokens and webhook calls. Must match SPP_WS_SECRET on the WebSocket server.', 'sports-player-platform')]
+            );
         }
 
         public function sanitize_options($options): array {
@@ -166,7 +201,7 @@ if (!class_exists('SPP_Settings')) {
                 return $saved;
             }
 
-            $sanitized = array_diff_key($saved, array_flip(['spp_payments_enabled', 'spp_paypal_sandbox', 'spp_require_email_verification']));
+            $sanitized = array_diff_key($saved, array_flip(['spp_payments_enabled', 'spp_paypal_sandbox', 'spp_require_email_verification', 'spp_ws_enabled']));
 
             if (isset($options['spp_events_provider_url'])) {
                 $sanitized['spp_events_provider_url'] = esc_url_raw($options['spp_events_provider_url']);
@@ -196,6 +231,20 @@ if (!class_exists('SPP_Settings')) {
                 }
             }
 
+            // WebSocket settings.
+            if (isset($options['spp_ws_enabled'])) {
+                $sanitized['spp_ws_enabled'] = 1;
+            }
+            if (isset($options['spp_ws_url'])) {
+                $sanitized['spp_ws_url'] = esc_url_raw($options['spp_ws_url']);
+            }
+            if (isset($options['spp_ws_secret']) && '' !== trim((string) $options['spp_ws_secret'])) {
+                $sanitized['spp_ws_secret'] = sanitize_text_field($options['spp_ws_secret']);
+            } elseif (!empty($saved['spp_ws_secret'])) {
+                // Preserve existing secret when field is submitted blank (password field UX).
+                $sanitized['spp_ws_secret'] = $saved['spp_ws_secret'];
+            }
+
             return $sanitized;
         }
 
@@ -213,6 +262,10 @@ if (!class_exists('SPP_Settings')) {
                 </form>
             </div>
             <?php
+        }
+
+        public function render_websocket_section_intro(): void {
+            echo '<p>' . esc_html__('Connect a standalone WebSocket server (see ws-server/ in the plugin) to push new messages and notifications in real time. When disabled or unreachable, the dashboard falls back to 5-second AJAX polling.', 'sports-player-platform') . '</p>';
         }
 
         public function render_text_field(array $args): void {

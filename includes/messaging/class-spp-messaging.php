@@ -20,6 +20,10 @@ if (!class_exists('SPP_Messaging')) {
         const STATUS_READ = 'read';
         const MONTHLY_PLAN_LIMIT = 50;
 
+        // WebSocket token TTL (seconds) and HMAC algorithm.
+        const WS_TOKEN_TTL  = 60;
+        const WS_TOKEN_ALGO = 'sha256';
+
         public static function get_instance(): self {
             if (null === self::$instance) {
                 self::$instance = new self();
@@ -41,6 +45,7 @@ if (!class_exists('SPP_Messaging')) {
             add_action('wp_ajax_spp_send_message', [$this, 'ajax_send_message']);
             add_action('wp_ajax_spp_fetch_messages', [$this, 'ajax_fetch_messages']);
             add_action('wp_ajax_spp_mark_notifications_read', [$this, 'ajax_mark_notifications_read']);
+            add_action('wp_ajax_spp_ws_token', [$this, 'ajax_ws_token']);
         }
 
         public function create_messaging_tables(): void {
@@ -72,17 +77,34 @@ if (!class_exists('SPP_Messaging')) {
             wp_enqueue_style('spp-messaging', SPP_PLUGIN_URL . 'assets/css/messaging.css', ['spp-dashboard'], SPP_VERSION);
             wp_enqueue_script('spp-messaging', SPP_PLUGIN_URL . 'assets/js/messaging.js', [], SPP_VERSION, true);
 
-            wp_localize_script('spp-messaging', 'sppMessaging', [
+            $ws      = $this->get_ws_settings();
+            $user_id = get_current_user_id();
+            $ws_data = [
                 'ajaxUrl'       => admin_url('admin-ajax.php'),
                 'nonce'         => wp_create_nonce('spp_messaging_nonce'),
-                'currentUserId' => get_current_user_id(),
+                'wsTokenNonce'  => wp_create_nonce('spp_ws_token_nonce'),
+                'currentUserId' => $user_id,
                 'pollInterval'  => 5000,
+                'wsEnabled'     => false,
+                'wsUrl'         => '',
+                'wsToken'       => '',
                 'i18n'          => [
-                    'sending' => __('Sending...', 'sports-player-platform'),
-                    'send'    => __('Send Message', 'sports-player-platform'),
-                    'error'   => __('Unable to send message.', 'sports-player-platform'),
+                    'sending'    => __('Sending...', 'sports-player-platform'),
+                    'send'       => __('Send Message', 'sports-player-platform'),
+                    'error'      => __('Unable to send message.', 'sports-player-platform'),
+                    'connecting' => __('Connecting real-time messaging…', 'sports-player-platform'),
+                    'offline'    => __('Real-time disconnected. Using periodic refresh.', 'sports-player-platform'),
+                    'sendError'  => __('Could not send message. Please try again.', 'sports-player-platform'),
                 ],
-            ]);
+            ];
+
+            if ($ws['enabled']) {
+                $ws_data['wsEnabled'] = true;
+                $ws_data['wsUrl']     = $ws['url'];
+                $ws_data['wsToken']   = $this->generate_ws_token($user_id);
+            }
+
+            wp_localize_script('spp-messaging', 'sppMessaging', $ws_data);
         }
 
         /**
@@ -226,6 +248,17 @@ if (!class_exists('SPP_Messaging')) {
                 $this->notify_recipient($sender_id, $recipient_id, $conversation_id, $subject);
             }
 
+            // Push message event to WS relay (all participants).
+            $user_ids = array_unique(array_merge([$sender_id], $recipient_ids));
+            $this->push_realtime_event([
+                'event'    => 'message',
+                'user_ids' => $user_ids,
+                'payload'  => [
+                    'conversation_id' => $conversation_id,
+                    'sender_id'       => $sender_id,
+                ],
+            ]);
+
             return $conversation_id;
         }
 
@@ -283,6 +316,17 @@ if (!class_exists('SPP_Messaging')) {
                 ['updated_at' => current_time('mysql')],
                 ['id' => $conversation_id]
             );
+
+            // Push message event to WS relay (all participants).
+            $user_ids = array_unique(array_merge([$sender_id], $recipients));
+            $this->push_realtime_event([
+                'event'    => 'message',
+                'user_ids' => $user_ids,
+                'payload'  => [
+                    'conversation_id' => $conversation_id,
+                    'sender_id'       => $sender_id,
+                ],
+            ]);
 
             return $inserted_id;
         }
@@ -678,6 +722,176 @@ if (!class_exists('SPP_Messaging')) {
                     }
                 }
             }
+
+            // Push real-time WebSocket event (non-blocking; falls back silently if WS disabled).
+            $this->push_realtime_event([
+                'event'    => 'notification',
+                'user_ids' => [$recipient_id],
+                'payload'  => [
+                    'conversation_id' => $conversation_id,
+                    'sender_name'     => $sender_name,
+                    'subject'         => $subject,
+                ],
+            ]);
+        }
+
+        /* -----------------------------------------------------------------------
+         * WebSocket Support — HMAC token generation + realtime event push
+         * ----------------------------------------------------------------------- */
+
+        /**
+         * Read and normalise the WebSocket settings from spp_settings option.
+         *
+         * @return array{enabled:bool, url:string, secret:string}
+         */
+        public function get_ws_settings(): array {
+            $settings = get_option('spp_settings', []);
+            $enabled  = !empty($settings['spp_ws_enabled'])
+                && !empty($settings['spp_ws_url'])
+                && !empty($settings['spp_ws_secret']);
+
+            return [
+                'enabled' => (bool) $enabled,
+                'url'     => isset($settings['spp_ws_url']) ? esc_url_raw($settings['spp_ws_url']) : '',
+                'secret'  => isset($settings['spp_ws_secret']) ? (string) $settings['spp_ws_secret'] : '',
+            ];
+        }
+
+        private function base64url_encode(string $data): string {
+            return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+        }
+
+        private function base64url_decode(string $data): string {
+            $pad = strlen($data) % 4;
+            if ($pad) {
+                $data .= str_repeat('=', 4 - $pad);
+            }
+            return (string) base64_decode(strtr($data, '-_', '+/'), true);
+        }
+
+        /**
+         * Build a signed, short-lived token for the given user.
+         * Format: base64url(json({uid,exp})) . '.' . base64url(hmac(payload))
+         */
+        public function generate_ws_token(int $user_id): string {
+            $settings = $this->get_ws_settings();
+            if (empty($settings['secret']) || $user_id <= 0) {
+                return '';
+            }
+
+            $payload = $this->base64url_encode(wp_json_encode([
+                'uid' => (int) $user_id,
+                'exp' => time() + self::WS_TOKEN_TTL,
+            ]));
+
+            $sig = $this->base64url_encode(
+                hash_hmac(self::WS_TOKEN_ALGO, $payload, $settings['secret'], true)
+            );
+
+            return $payload . '.' . $sig;
+        }
+
+        /**
+         * Verify a WS token and return the user id, or null on failure/expiry.
+         */
+        public function verify_ws_token(string $token): ?int {
+            $settings = $this->get_ws_settings();
+            if (empty($settings['secret']) || !is_string($token) || strpos($token, '.') === false) {
+                return null;
+            }
+
+            $parts = explode('.', $token, 2);
+            if (count($parts) !== 2) {
+                return null;
+            }
+            [$payload, $sig] = $parts;
+
+            $expected = $this->base64url_encode(
+                hash_hmac(self::WS_TOKEN_ALGO, $payload, $settings['secret'], true)
+            );
+            if (!hash_equals($expected, $sig)) {
+                return null;
+            }
+
+            $data = json_decode($this->base64url_decode($payload), true);
+            if (!is_array($data) || empty($data['uid']) || empty($data['exp'])) {
+                return null;
+            }
+            if (time() > (int) $data['exp']) {
+                return null;
+            }
+
+            return (int) $data['uid'];
+        }
+
+        /**
+         * Derive the HTTP publish endpoint URL from the WebSocket URL.
+         */
+        private function get_publish_url(string $ws_url): string {
+            if ('' === $ws_url) {
+                return '';
+            }
+            $http_url = preg_replace('#^wss://#i', 'https://', $ws_url);
+            $http_url = preg_replace('#^ws://#i', 'http://', $http_url);
+            return rtrim((string) $http_url, '/') . '/publish';
+        }
+
+        /**
+         * Push a realtime event to the WebSocket relay server.
+         * Non-blocking (blocking=false) so it never delays the current request.
+         *
+         * @param array{event:string, user_ids:int[], payload:array} $event
+         */
+        public function push_realtime_event(array $event): bool {
+            $settings = $this->get_ws_settings();
+            if (!$settings['enabled']) {
+                return false;
+            }
+
+            $publish_url = $this->get_publish_url($settings['url']);
+            if ('' === $publish_url) {
+                return false;
+            }
+
+            $body = wp_json_encode($event);
+            if (false === $body) {
+                return false;
+            }
+
+            $signature = $this->base64url_encode(
+                hash_hmac(self::WS_TOKEN_ALGO, $body, $settings['secret'], true)
+            );
+
+            $response = wp_remote_post($publish_url, [
+                'method'   => 'POST',
+                'timeout'  => 5,
+                'blocking' => false,
+                'headers'  => [
+                    'Content-Type'    => 'application/json',
+                    'X-SPP-Signature' => $signature,
+                ],
+                'body'     => $body,
+            ]);
+
+            return !is_wp_error($response);
+        }
+
+        /**
+         * AJAX: Issue a fresh short-lived WS auth token for the current user.
+         */
+        public function ajax_ws_token(): void {
+            check_ajax_referer('spp_ws_token_nonce', 'nonce');
+
+            if (!is_user_logged_in()) {
+                wp_send_json_error(['message' => __('Unauthorized.', 'sports-player-platform')], 401);
+            }
+
+            $token = $this->generate_ws_token(get_current_user_id());
+            if ('' === $token) {
+                wp_send_json_error(['message' => __('WebSocket not configured.', 'sports-player-platform')], 503);
+            }
+
+            wp_send_json_success(['token' => $token]);
         }
     }
 }

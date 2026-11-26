@@ -704,6 +704,12 @@ if (!class_exists('SPP_Public')) {
                 return file_exists($custom) ? $custom : $template;
             }
 
+            // Handle custom page template for rankings
+            if (is_page('rankings')) {
+                $custom = SPP_PLUGIN_DIR . 'spp/rankings.php';
+                return file_exists($custom) ? $custom : $template;
+            }
+
             return $template;
         }
 
