@@ -76,6 +76,76 @@ if (!class_exists('SPP_Settings')) {
                 'spp_general_section',
                 ['option' => 'spp_membership_plans', 'label' => __('Define membership plans (one per line, format: name|price|duration):', 'sports-player-platform')]
             );
+
+            add_settings_section(
+                'spp_payment_section',
+                __('Payment Gateways', 'sports-player-platform'),
+                null,
+                'spp-settings'
+            );
+
+            add_settings_field(
+                'spp_active_gateway',
+                __('Active Payment Gateway', 'sports-player-platform'),
+                [$this, 'render_select_field'],
+                'spp-settings',
+                'spp_payment_section',
+                ['option' => 'spp_active_gateway', 'options' => ['stripe' => 'Stripe', 'paypal' => 'PayPal']]
+            );
+
+            add_settings_field(
+                'spp_stripe_publishable_key',
+                __('Stripe Publishable Key', 'sports-player-platform'),
+                [$this, 'render_text_field'],
+                'spp-settings',
+                'spp_payment_section',
+                ['option' => 'spp_stripe_publishable_key', 'type' => 'text', 'label' => __('pk_test_... or pk_live_...', 'sports-player-platform')]
+            );
+
+            add_settings_field(
+                'spp_stripe_secret_key',
+                __('Stripe Secret Key', 'sports-player-platform'),
+                [$this, 'render_text_field'],
+                'spp-settings',
+                'spp_payment_section',
+                ['option' => 'spp_stripe_secret_key', 'type' => 'password', 'label' => __('sk_test_... or sk_live_...', 'sports-player-platform')]
+            );
+
+            add_settings_field(
+                'spp_stripe_webhook_secret',
+                __('Stripe Webhook Secret', 'sports-player-platform'),
+                [$this, 'render_text_field'],
+                'spp-settings',
+                'spp_payment_section',
+                ['option' => 'spp_stripe_webhook_secret', 'type' => 'password', 'label' => __('whsec_... (Endpoint: /wp-json/spp/v1/stripe-webhook)', 'sports-player-platform')]
+            );
+
+            add_settings_field(
+                'spp_paypal_sandbox',
+                __('PayPal Sandbox Mode', 'sports-player-platform'),
+                [$this, 'render_checkbox_field'],
+                'spp-settings',
+                'spp_payment_section',
+                ['option' => 'spp_paypal_sandbox', 'label' => __('Use PayPal Sandbox for testing', 'sports-player-platform')]
+            );
+
+            add_settings_field(
+                'spp_paypal_client_id',
+                __('PayPal Client ID', 'sports-player-platform'),
+                [$this, 'render_text_field'],
+                'spp-settings',
+                'spp_payment_section',
+                ['option' => 'spp_paypal_client_id', 'type' => 'text', 'label' => __('PayPal REST App Client ID', 'sports-player-platform')]
+            );
+
+            add_settings_field(
+                'spp_paypal_secret',
+                __('PayPal Secret', 'sports-player-platform'),
+                [$this, 'render_text_field'],
+                'spp-settings',
+                'spp_payment_section',
+                ['option' => 'spp_paypal_secret', 'type' => 'password', 'label' => __('PayPal REST App Secret', 'sports-player-platform')]
+            );
         }
 
         public function sanitize_options(array $options): array {
@@ -84,13 +154,25 @@ if (!class_exists('SPP_Settings')) {
             if (isset($options['spp_events_provider_url'])) {
                 $sanitized['spp_events_provider_url'] = esc_url_raw($options['spp_events_provider_url']);
             }
-
             if (isset($options['spp_payments_enabled'])) {
                 $sanitized['spp_payments_enabled'] = 1;
             }
-
             if (isset($options['spp_membership_plans'])) {
                 $sanitized['spp_membership_plans'] = sanitize_textarea_field($options['spp_membership_plans']);
+            }
+            if (isset($options['spp_active_gateway'])) {
+                $sanitized['spp_active_gateway'] = in_array($options['spp_active_gateway'], ['stripe', 'paypal'], true)
+                    ? $options['spp_active_gateway']
+                    : 'stripe';
+            }
+            if (isset($options['spp_paypal_sandbox'])) {
+                $sanitized['spp_paypal_sandbox'] = 1;
+            }
+
+            foreach (['spp_stripe_publishable_key', 'spp_stripe_secret_key', 'spp_stripe_webhook_secret', 'spp_paypal_client_id', 'spp_paypal_secret'] as $key) {
+                if (isset($options[$key])) {
+                    $sanitized[$key] = sanitize_text_field($options[$key]);
+                }
             }
 
             return $sanitized;
@@ -113,41 +195,56 @@ if (!class_exists('SPP_Settings')) {
         }
 
         public function render_text_field(array $args): void {
-            $option = $args['option'] ?? '';
-            $label = $args['label'] ?? '';
-            $value = get_option('spp_events_provider_url', '');
+            $option   = $args['option'] ?? '';
+            $label    = $args['label'] ?? '';
+            $type     = $args['type'] ?? 'url';
+            $settings = get_option('spp_settings', []);
+            $value    = $settings[$option] ?? '';
             ?>
-            <p>
-                <label for="spp_events_provider_url"><?php echo esc_html($label); ?></label><br>
-                <input type="url" name="spp_events_provider_url" id="spp_events_provider_url" value="<?php echo esc_attr($value); ?>" class="regular-text" />
-            </p>
+            <input type="<?php echo esc_attr($type); ?>" name="spp_settings[<?php echo esc_attr($option); ?>]" id="<?php echo esc_attr($option); ?>" value="<?php echo esc_attr($value); ?>" class="regular-text" />
+            <?php if ($label): ?>
+                <p class="description"><?php echo esc_html($label); ?></p>
+            <?php endif; ?>
+            <?php
+        }
+
+        public function render_select_field(array $args): void {
+            $option   = $args['option'] ?? '';
+            $options  = $args['options'] ?? [];
+            $settings = get_option('spp_settings', []);
+            $value    = $settings[$option] ?? '';
+            ?>
+            <select name="spp_settings[<?php echo esc_attr($option); ?>]" id="<?php echo esc_attr($option); ?>">
+                <?php foreach ($options as $val => $text): ?>
+                    <option value="<?php echo esc_attr($val); ?>" <?php selected($value, $val); ?>>
+                        <?php echo esc_html($text); ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
             <?php
         }
 
         public function render_checkbox_field(array $args): void {
-            $option = $args['option'] ?? '';
-            $label = $args['label'] ?? '';
-            $value = (bool) get_option('spp_payments_enabled', false);
+            $option   = $args['option'] ?? '';
+            $label    = $args['label'] ?? '';
+            $settings = get_option('spp_settings', []);
+            $value    = !empty($settings[$option]);
             ?>
-            <p>
-                <label for="spp_payments_enabled">
-                    <input type="checkbox" name="spp_payments_enabled" id="spp_payments_enabled" value="1" <?php checked($value, true, true); ?> />
-                    <?php echo esc_html($label); ?>
-                </label>
-            </p>
+            <label for="<?php echo esc_attr($option); ?>">
+                <input type="checkbox" name="spp_settings[<?php echo esc_attr($option); ?>]" id="<?php echo esc_attr($option); ?>" value="1" <?php checked($value, true, true); ?> />
+                <?php echo esc_html($label); ?>
+            </label>
             <?php
         }
 
         public function render_textarea_field(array $args): void {
-            $option = $args['option'] ?? '';
-            $label = $args['label'] ?? '';
-            $value = get_option('spp_membership_plans', '');
+            $option   = $args['option'] ?? '';
+            $label    = $args['label'] ?? '';
+            $settings = get_option('spp_settings', []);
+            $value    = $settings[$option] ?? '';
             ?>
-            <p>
-                <label for="spp_membership_plans"><?php echo esc_html($label); ?></label><br>
-                <textarea name="spp_membership_plans" id="spp_membership_plans" rows="5" class="large-text"><?php echo esc_textarea($value); ?></textarea>
-                <p class="description">Example: Monthly|$9.99|30 days&#10;Annual|$99.99|365 days</p>
-            </p>
+            <textarea name="spp_settings[<?php echo esc_attr($option); ?>]" id="<?php echo esc_attr($option); ?>" rows="5" class="large-text"><?php echo esc_textarea($value); ?></textarea>
+            <p class="description"><?php echo esc_html($label); ?> Example: Monthly|$29.00|30 days</p>
             <?php
         }
     }}

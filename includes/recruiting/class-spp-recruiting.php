@@ -31,67 +31,13 @@ if (!class_exists('SPP_Recruiting')) {
         }
 
         private function init_hooks(): void {
-            add_action('init', [$this, 'create_recruiting_tables']);
-
             add_shortcode('spp_recruiting_lists', [$this, 'render_recruiting_lists']);
         }
 
         public function create_recruiting_tables(): void {
-            global $wpdb;
-
-            $charset_collate = $wpdb->get_charset_collate();
-
-            require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-
-            // Recruiting lists table
-            $table_name = $wpdb->prefix . 'spp_recruiting_lists';
-            $sql = "CREATE TABLE IF NOT EXISTS $table_name (
-                id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
-                coach_id BIGINT(20) UNSIGNED NOT NULL,
-                name VARCHAR(255) NOT NULL,
-                description LONGTEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                is_active TINYINT(1) NOT NULL DEFAULT 1,
-                PRIMARY KEY (id),
-                KEY coach_id_idx (coach_id)
-            ) $charset_collate;";
-
-            dbDelta($sql);
-
-            // Player interest tracking table
-            $table_name = $wpdb->prefix . 'spp_player_interest';
-            $sql = "CREATE TABLE IF NOT EXISTS $table_name (
-                id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
-                coach_id BIGINT(20) UNSIGNED NOT NULL,
-                player_id BIGINT(20) UNSIGNED NOT NULL,
-                interest_level ENUM('low', 'medium', 'high') NOT NULL DEFAULT 'medium',
-                notes LONGTEXT,
-                first_viewed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_viewed TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                status ENUM('interested', 'contacted', 'under_consideration', 'scouted', 'committed') NOT NULL DEFAULT 'interested',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (id),
-                UNIQUE KEY coach_player_idx (coach_id, player_id),
-                KEY player_id_idx (player_id),
-                KEY status_idx (status)
-            ) $charset_collate;";
-
-            dbDelta($sql);
-
-            // Saved players list table
-            $table_name = $wpdb->prefix . 'spp_saved_players';
-            $sql = "CREATE TABLE IF NOT EXISTS $table_name (
-                id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
-                user_id BIGINT(20) UNSIGNED NOT NULL,
-                player_id BIGINT(20) UNSIGNED NOT NULL,
-                saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                notes TEXT,
-                PRIMARY KEY (id),
-                UNIQUE KEY user_player_idx (user_id, player_id)
-            ) $charset_collate;";
-
-            dbDelta($sql);
+            if (class_exists('SPP_DB')) {
+                SPP_DB::get_instance()->create_tables();
+            }
         }
 
         public function save_player(int $user_id, int $player_id, string $notes = ''): bool {

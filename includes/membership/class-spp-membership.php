@@ -33,38 +33,17 @@ if (!class_exists('SPP_Membership')) {
         }
 
         private function init_hooks(): void {
-            add_action('init', [$this, 'create_membership_tables']);
             add_action('user_register', [$this, 'create_default_membership']);
             add_filter('user_meta', [$this, 'add_membership_meta']);
 
             add_shortcode('spp_membership_status', [$this, 'render_membership_status']);
+            add_shortcode('spp_pricing_table', [$this, 'render_pricing_table']);
         }
 
         public function create_membership_tables(): void {
-            global $wpdb;
-
-            $table_name = $wpdb->prefix . 'spp_memberships';
-            $charset_collate = $wpdb->get_charset_collate();
-
-            $sql = "CREATE TABLE IF NOT EXISTS $table_name (
-                id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
-                user_id BIGINT(20) UNSIGNED NOT NULL,
-                type VARCHAR(50) NOT NULL DEFAULT '" . self::TYPE_FREE . "',
-                status VARCHAR(50) NOT NULL DEFAULT '" . self::STATUS_ACTIVE . "',
-                started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                expires_at DATETIME NULL,
-                plan_details LONGTEXT,
-                payment_method VARCHAR(50),
-                transaction_id VARCHAR(255),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                PRIMARY KEY (id),
-                KEY user_id_idx (user_id),
-                KEY status_idx (status)
-            ) $charset_collate;";
-
-            require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-            dbDelta($sql);
+            if (class_exists('SPP_DB')) {
+                SPP_DB::get_instance()->create_tables();
+            }
         }
 
         public function create_default_membership(int $user_id): void {
@@ -162,7 +141,7 @@ if (!class_exists('SPP_Membership')) {
 
             // Check required type
             if ($required_type) {
-                return in_array($membership['type'], $required_type);
+                return $membership['type'] === $required_type;
             }
 
             return true;
@@ -217,6 +196,34 @@ if (!class_exists('SPP_Membership')) {
             </div>
             <?php
             return ob_get_clean();
+        }
+
+        /**
+         * Render [spp_pricing_table] shortcode.
+         */
+        public function render_pricing_table(): string {
+            $plans        = class_exists('SPP_Payment') ? SPP_Payment::get_plans() : [];
+            $is_logged_in = is_user_logged_in();
+            $current_plan = 'free';
+
+            if ($is_logged_in) {
+                $membership = $this->get_user_membership(get_current_user_id());
+                if ($membership && ($membership['status'] ?? '') === self::STATUS_ACTIVE) {
+                    $current_plan = $membership['type'] ?? 'free';
+                }
+            }
+
+            $template_path = SPP_PLUGIN_DIR . 'templates/membership/pricing-table.php';
+            if (!file_exists($template_path)) {
+                return '';
+            }
+
+            $ajax_url = admin_url('admin-ajax.php');
+            $nonce    = wp_create_nonce('spp_pricing_nonce');
+
+            ob_start();
+            include $template_path;
+            return (string) ob_get_clean();
         }
     }
 }

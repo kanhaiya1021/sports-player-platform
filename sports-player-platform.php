@@ -48,7 +48,7 @@ define('SPP_PLUGIN_BASENAME', plugin_basename(__FILE__));
 /**
  * Database version constant
  */
-define('SPP_DB_VERSION', '1.0.0');
+define('SPP_DB_VERSION', '1.1.0');
 
 /**
  * Autoloader
@@ -97,10 +97,9 @@ final class Sports_Player_Platform {
      * Initialize WordPress hooks
      */
     private function init_hooks(): void {
-        // Activation and deactivation hooks
+        // Activation and deactivation hooks (uninstall is handled by uninstall.php)
         register_activation_hook(SPP_PLUGIN_FILE, [$this, 'activate']);
         register_deactivation_hook(SPP_PLUGIN_FILE, [$this, 'deactivate']);
-        register_uninstall_hook(SPP_PLUGIN_FILE, [__CLASS__, 'uninstall']);
 
         // Initialize on plugins_loaded
         add_action('plugins_loaded', [$this, 'load_plugin'], 10);
@@ -141,23 +140,9 @@ final class Sports_Player_Platform {
     }
 
     /**
-     * Plugin uninstall hook
-     */
-    public static function uninstall(): void {
-        // Delete options
-        delete_option('spp_db_version');
-        delete_option('spp_settings');
-
-        // Do action for other plugins/modules
-        do_action('spp_uninstalled');
-    }
-
-    /**
      * Create database tables
      */
     private function create_database_tables(): void {
-        global $wpdb;
-
         require_once SPP_PLUGIN_DIR . 'includes/database/class-spp-db.php';
         SPP_DB::get_instance()->create_tables();
     }
@@ -171,6 +156,10 @@ final class Sports_Player_Platform {
 
         // Load core classes
         $this->load_core_classes();
+
+        // Run automatic DB migrations when SPP_DB_VERSION increases
+        require_once SPP_PLUGIN_DIR . 'includes/database/class-spp-db.php';
+        SPP_DB::get_instance()->upgrade();
 
         // Load modules
         $this->load_modules();
@@ -194,6 +183,10 @@ final class Sports_Player_Platform {
         require_once SPP_PLUGIN_DIR . 'includes/membership/class-spp-membership.php';
         SPP_Membership::get_instance();
 
+        // Load payment class
+        require_once SPP_PLUGIN_DIR . 'includes/payment/class-spp-payment.php';
+        SPP_Payment::get_instance();
+
         // Load messaging class
         require_once SPP_PLUGIN_DIR . 'includes/messaging/class-spp-messaging.php';
         SPP_Messaging::get_instance();
@@ -201,6 +194,10 @@ final class Sports_Player_Platform {
         // Load recruiting class
         require_once SPP_PLUGIN_DIR . 'includes/recruiting/class-spp-recruiting.php';
         SPP_Recruiting::get_instance();
+
+        // Load dashboard class
+        require_once SPP_PLUGIN_DIR . 'includes/dashboard/class-spp-dashboard.php';
+        SPP_Dashboard::get_instance();
 
         // Load settings class
         require_once SPP_PLUGIN_DIR . 'includes/settings/class-spp-settings.php';

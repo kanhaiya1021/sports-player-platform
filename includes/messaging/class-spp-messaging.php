@@ -28,53 +28,14 @@ if (!class_exists('SPP_Messaging')) {
         }
 
         private function init_hooks(): void {
-            add_action('init', [$this, 'create_messaging_tables']);
-
             add_shortcode('spp_messages', [$this, 'render_messages_page']);
             add_shortcode('spp_message_form', [$this, 'render_message_form']);
         }
 
         public function create_messaging_tables(): void {
-            global $wpdb;
-
-            $charset_collate = $wpdb->get_charset_collate();
-
-            // Conversations table
-            $table_name = $wpdb->prefix . 'spp_conversations';
-            $sql = "CREATE TABLE IF NOT EXISTS $table_name (
-                id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
-                subject VARCHAR(255) NOT NULL,
-                sender_id BIGINT(20) UNSIGNED NOT NULL,
-                participant_ids TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                is_archived TINYINT(1) NOT NULL DEFAULT 0,
-                PRIMARY KEY (id),
-                KEY sender_id_idx (sender_id),
-                KEY updated_at_idx (updated_at)
-            ) $charset_collate;";
-
-            require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-            dbDelta($sql);
-
-            // Messages table
-            $messages_table = $wpdb->prefix . 'spp_messages';
-            $sql = "CREATE TABLE IF NOT EXISTS $messages_table (
-                id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
-                conversation_id BIGINT(20) UNSIGNED NOT NULL,
-                sender_id BIGINT(20) UNSIGNED NOT NULL,
-                recipient_id BIGINT(20) UNSIGNED NOT NULL,
-                message LONGTEXT NOT NULL,
-                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_read TINYINT(1) NOT NULL DEFAULT 0,
-                is_deleted TINYINT(1) NOT NULL DEFAULT 0,
-                PRIMARY KEY (id),
-                KEY conversation_id_idx (conversation_id),
-                KEY recipient_id_idx (recipient_id),
-                KEY is_read_idx (is_read)
-            ) $charset_collate;";
-
-            dbDelta($sql);
+            if (class_exists('SPP_DB')) {
+                SPP_DB::get_instance()->create_tables();
+            }
         }
 
         public function send_message(int $sender_id, array $recipient_ids, string $subject, string $message): int {
