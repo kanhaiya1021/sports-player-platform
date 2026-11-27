@@ -34,7 +34,7 @@ if (!defined('ABSPATH')) {
             </p>
             <p class="spp-form-field">
                 <label for="spp_list_sport"><?php esc_html_e('Sport', 'sports-player-platform'); ?></label>
-                <input type="text" id="spp_list_sport" name="sport" placeholder="<?php esc_attr_e('e.g., Soccer', 'sports-player-platform'); ?>">
+                <input type="text" id="spp_list_sport" name="sport" placeholder="<?php esc_attr_e('e.g., Basketball', 'sports-player-platform'); ?>">
             </p>
         </div>
         <p class="spp-form-field">

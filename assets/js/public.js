@@ -1,96 +1,24 @@
-// Sports Player Platform Public JavaScript
-jQuery(document).ready(function($) {
-    console.log('SPP Public loaded');
-
-    // Player Directory AJAX Search
-    var spp_search_timeout = null;
-
-    function spp_debounce_search() {
-        if (spp_search_timeout) {
-            clearTimeout(spp_search_timeout);
-        }
-        spp_search_timeout = setTimeout(function() {
-            spp_search_players();
-        }, 300);
-    }
-
-    // Search input with debounce
-    $('#spp_dir_search').on('input', function() {
-        if (spp_search_timeout) {
-            clearTimeout(spp_search_timeout);
-        }
-        spp_search_timeout = setTimeout(spp_search_players, 300);
-    });
-
-    // Sport filter change
-    $(document).on('change', '.spp-filter-sport', function() {
-        spp_search_players();
-    });
-
-    // Position filter change
-    $(document).on('change', '.spp-filter-position', function() {
-        spp_search_players();
-    });
-
-    // Graduation year filter change
-    $(document).on('change', '.spp-filter-grad-year', function() {
-        spp_search_players();
-    });
-
-    // Ranking filter change
-    $(document).on('change', '.spp-filter-ranking', function() {
-        spp_search_players();
-    });
-
-    // Reset filters
-    $(document).on('click', '.spp-reset-filters', function() {
-        $('#spp_dir_search').val('');
-        $('.spp-filter-sport').val('').trigger('change');
-        $('.spp-filter-position').val('').prop('selected', true).trigger('change');
-        $('.spp-filter-grad-year').val('').prop('selected', true).trigger('change');
-        $('.spp-filter-ranking').val('').prop('selected', true).trigger('change');
-    });
-
-    function spp_search_players() {
-        var search = $('#spp_dir_search').val();
-        var sport = $('.spp-filter-sport').val();
-        var position = $('.spp-filter-position').val();
-        var grad_year = $('.spp-filter-grad-year').val();
-        var ranking = $('.spp-filter-ranking').val();
-
-        $.ajax({
-            url: SPP_Public.ajax_url,
-            type: 'POST',
-            data: {
-                action: 'spp_search_players',
-                search: search,
-                sport: sport,
-                playing_position: position,
-                graduation_year: grad_year,
-                ranking: ranking,
-                nonce: SPP_Public.nonce
-            },
-            beforeSend: function() {
-                $('.spp-players-grid').html('<p>Loading...</p>');
-            },
-            success: function(response) {
-                $('.spp-players-grid').html(response);
-            },
-            error: function() {
-                $('.spp-players-grid').html('<p>Error loading players. Please try again.</p>');
-            }
-        });
-    }
-});
-
-
-// Phase 6: Vanilla JS Player Directory Filtering
+// Sports Player Platform Public JavaScript (Vanilla JS Player Directory AJAX Filtering)
 document.addEventListener('DOMContentLoaded', () => {
     const filterForm = document.getElementById('spp-directory-filters');
     const grid = document.getElementById('spp-directory-grid');
     const countEl = document.getElementById('spp-results-count');
     const resetBtn = document.getElementById('spp-dir-reset');
     if (!filterForm || !grid || typeof SPP_Public === 'undefined') return;
+
+    // Pre-fill filters from URL query parameters if present (e.g. ?search=elena)
+    const urlParams = new URLSearchParams(window.location.search);
+    let hasInitialParams = false;
+    ['search', 'sport', 'position', 'grad_year', 'ranking'].forEach((key) => {
+        const val = urlParams.get(key);
+        if (val) {
+            const field = filterForm.elements.namedItem(key);
+            if (field) {
+                field.value = val;
+                hasInitialParams = true;
+            }
+        }
+    });
 
     let timer = null;
     const fetchPlayers = async (paged = 1) => {
@@ -114,6 +42,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    filterForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        fetchPlayers(1);
+    });
+
     filterForm.addEventListener('input', () => {
         clearTimeout(timer);
         timer = setTimeout(() => fetchPlayers(1), 300);
@@ -126,5 +59,9 @@ document.addEventListener('DOMContentLoaded', () => {
             filterForm.reset();
             fetchPlayers(1);
         });
+    }
+
+    if (hasInitialParams) {
+        fetchPlayers(1);
     }
 });

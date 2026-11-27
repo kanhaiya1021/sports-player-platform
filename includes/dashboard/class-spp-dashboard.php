@@ -38,6 +38,7 @@ if (!class_exists('SPP_Dashboard')) {
             add_action('wp_ajax_spp_save_player_profile', [$this, 'ajax_save_player_profile']);
             add_action('wp_ajax_spp_cancel_membership', [$this, 'ajax_cancel_membership']);
             add_action('wp_ajax_spp_remove_saved_player', [$this, 'ajax_remove_saved_player']);
+            add_action('wp_ajax_spp_upload_image', [$this, 'ajax_upload_image']);
         }
 
         /**
@@ -218,6 +219,47 @@ if (!class_exists('SPP_Dashboard')) {
                 wp_send_json_error(['message' => $post_id->get_error_message()], 500);
             }
 
+            // Process file uploads for images
+            $uploaded_image_urls = [];
+            if (!empty($_FILES['image_gallery_upload']) && $_FILES['image_gallery_upload']['error'][0] === UPLOAD_ERR_OK) {
+                foreach ($_FILES['image_gallery_upload'] as $key => $value) {
+                    if ($value['error'] === UPLOAD_ERR_OK) {
+                        $file_array = [
+                            'name'     => $value['name'],
+                            'tmp_name' => $value['tmp_name'],
+                        ];
+                        $uploaded_id = media_handle_transfer('image', $post_id, $value['name']);
+                        if (is_numeric($uploaded_id)) {
+                            $uploaded_image_urls[] = wp_get_attachment_url($uploaded_id);
+                        }
+                    }
+                }
+            }
+
+            // Process file uploads for videos
+            $uploaded_video_urls = [];
+            if (!empty($_FILES['video_gallery_upload']) && $_FILES['video_gallery_upload']['error'][0] === UPLOAD_ERR_OK) {
+                foreach ($_FILES['video_gallery_upload'] as $key => $value) {
+                    if ($value['error'] === UPLOAD_ERR_OK) {
+                        $uploaded_id = media_handle_transfer('video', $post_id, $value['name']);
+                        if (is_numeric($uploaded_id)) {
+                            $uploaded_video_urls[] = wp_get_attachment_url($uploaded_id);
+                        }
+                    }
+                }
+            }
+
+            // Combine existing URLs with uploaded URLs
+            $existing_image_urls = is_array($_POST['image_gallery'] ?? [])
+                ? array_map('trim', $_POST['image_gallery'] ?? [])
+                : preg_split('/\r\n|\r|\n/', sanitize_textarea_field(wp_unslash($_POST['image_gallery'] ?? '')), -1, PREG_SPLIT_NO_EMPTY);
+            $existing_video_urls = is_array($_POST['videos_highlights'] ?? [])
+                ? array_map('trim', $_POST['videos_highlights'] ?? [])
+                : preg_split('/\r\n|\r|\n/', sanitize_textarea_field(wp_unslash($_POST['videos_highlights'] ?? '')), -1, PREG_SPLIT_NO_EMPTY);
+
+            $all_image_urls = array_merge($existing_image_urls, $uploaded_image_urls);
+            $all_video_urls = array_merge($existing_video_urls, $uploaded_video_urls);
+
             $meta_fields = [
                 'date_of_birth'     => sanitize_text_field(wp_unslash($_POST['date_of_birth'] ?? '')),
                 'location'          => sanitize_text_field(wp_unslash($_POST['location'] ?? '')),
@@ -228,8 +270,8 @@ if (!class_exists('SPP_Dashboard')) {
                 'weight'            => sanitize_text_field(wp_unslash($_POST['weight'] ?? '')),
                 'graduation_year'   => absint($_POST['graduation_year'] ?? 0) ?: '',
                 'school'            => sanitize_text_field(wp_unslash($_POST['school'] ?? '')),
-                'image_gallery'     => sanitize_textarea_field(wp_unslash($_POST['image_gallery'] ?? '')),
-                'videos_highlights' => sanitize_textarea_field(wp_unslash($_POST['videos_highlights'] ?? '')),
+                'image_gallery'     => implode("\n", array_filter(array_map('esc_url_raw', $all_image_urls))),
+                'videos_highlights' => implode("\n", array_filter(array_map('esc_url_raw', $all_video_urls))),
                 'gpa'               => sanitize_text_field(wp_unslash($_POST['gpa'] ?? '')),
                 'sat_act_scores'    => sanitize_text_field(wp_unslash($_POST['sat_act_scores'] ?? '')),
                 'awards'            => sanitize_textarea_field(wp_unslash($_POST['awards'] ?? '')),
@@ -244,6 +286,11 @@ if (!class_exists('SPP_Dashboard')) {
             $profile    = $this->get_player_profile_data($user_id, get_post($post_id));
             $completion = $this->calculate_profile_completion($profile);
 
+            // Determine next tab to navigate to
+            $current_tab = sanitize_text_field(wp_unslash($_POST['current_tab'] ?? 'personal'));
+            $tab_order   = ['personal' => 'athletic', 'athletic' => 'media', 'media' => 'academic', 'academic' => 'personal'];
+            $next_tab    = $tab_order[$current_tab] ?? 'personal';
+
             wp_send_json_success([
                 'message'    => $invalid_fields
                     ? sprintf(
@@ -255,6 +302,7 @@ if (!class_exists('SPP_Dashboard')) {
                 'post_id'    => $post_id,
                 'completion' => $completion,
                 'status'     => 'spp_pending',
+                'next_tab'   => $next_tab,
             ]);
         }
 
@@ -304,6 +352,46 @@ if (!class_exists('SPP_Dashboard')) {
             }
 
             wp_send_json_success(['message' => __('Player removed from shortlist.', 'sports-player-platform')]);
+        }
+
+        /**
+         * AJAX: Upload a single image file.
+         */
+        public function ajax_upload_image(): void {
+            check_ajax_referer('spp_dashboard_nonce', 'nonce');
+
+            if (!is_user_logged_in() || (!current_user_can('edit_own_profile') && !current_user_can('manage_options'))) {
+                wp_send_json_error(['message' => __('Unauthorized.', 'sports-player-platform')], 403);
+            }
+
+            if (empty($_FILES['file']) || $_FILES['file']['error'] !== UPLOAD_ERR_OK) {
+                wp_send_json_error(['message' => __('Upload failed. Please try again.', 'sports-player-platform')], 400);
+            }
+
+            $file = $_FILES['file'];
+            $allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+
+            $file_type = mime_content_type($file['tmp_name']);
+            if (!in_array($file_type, $allowed_types, true)) {
+                wp_send_json_error(['message' => __('Invalid file type. Only JPG, PNG, GIF, and WEBP allowed.', 'sports-player-platform')], 400);
+            }
+
+            $user_id = get_current_user_id();
+            $post_id = $this->get_user_player_post($user_id);
+            $parent_post_id = $post_id ? $post_id->ID : 0;
+
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+            require_once ABSPATH . 'wp-admin/includes/image.php';
+            require_once ABSPATH . 'wp-admin/includes/media.php';
+            $uploaded_id = media_handle_upload('file', $parent_post_id);
+
+            if (is_numeric($uploaded_id)) {
+                $url = wp_get_attachment_url($uploaded_id);
+                wp_send_json_success(['url' => $url, 'message' => __('Image uploaded successfully.', 'sports-player-platform')]);
+            } else {
+                $error = is_wp_error($uploaded_id) ? $uploaded_id->get_error_message() : __('Upload failed.', 'sports-player-platform');
+                wp_send_json_error(['message' => $error], 400);
+            }
         }
 
         /**

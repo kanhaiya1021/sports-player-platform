@@ -1,292 +1,148 @@
-﻿/**
- * Real-time messaging for the Sports Player Platform dashboard.
- *
- * Connects to the configured WebSocket server when a URL + auth token are present
- * (sppMessaging.wsUrl / sppMessaging.wsToken). Incoming "wake-up" events trigger a
- * refresh of the current conversation via the AJAX fallback endpoint, which is also
- * used as the automatic 5-second polling fallback whenever WebSocket is disabled,
- * unconfigured, or disconnected.
- */
-(function () {
-    'use strict';
+document.addEventListener('DOMContentLoaded', () => {
+    const shell = document.querySelector('.spp-messaging-shell');
+    const threadBox = document.getElementById('spp-thread-messages');
+    const replyForm = document.getElementById('spp-reply-form');
+    const newConvToggle = document.getElementById('spp-new-conv-toggle');
+    const newConvForm = document.getElementById('spp-new-conv-form');
+    const feedback = document.getElementById('spp-msg-feedback');
 
-    document.addEventListener('DOMContentLoaded', function () {
-        var cfg = (typeof window.sppMessaging !== 'undefined') ? window.sppMessaging : {};
-        if (!cfg.ajaxUrl) {
-            return;
-        }
+    const showFeedback = (msg, isError = false) => {
+        if (!feedback) return;
+        feedback.style.display = 'block';
+        feedback.className = 'spp-notice ' + (isError ? 'spp-notice-error' : 'spp-notice-success');
+        feedback.textContent = msg;
+    };
 
-        var pageWrap = document.querySelector('.spp-messages-wrap');
-        if (!pageWrap) {
-            return;
-        }
+    const renderMessages = (messages) => {
+        if (!threadBox || !Array.isArray(messages)) return;
+        const currentId = Number(sppMessaging.currentUserId);
+        threadBox.innerHTML = messages.map((m) => {
+            const isMine = Number(m.sender_id) === currentId;
+            return `
+                <div class="spp-bubble ${isMine ? 'is-mine' : 'is-theirs'}">
+                    <div class="spp-bubble-meta">
+                        <strong>${escapeHtml(m.sender_name || '')}</strong>
+                        <span>${escapeHtml(m.sent_at || '')}</span>
+                    </div>
+                    <div class="spp-bubble-body">${escapeHtml(m.message || '')}</div>
+                </div>
+            `;
+        }).join('');
+        threadBox.scrollTop = threadBox.scrollHeight;
+    };
 
-        var threadEl = document.getElementById('spp-thread-messages');
-        var conversationId = threadEl ? parseInt(threadEl.getAttribute('data-conversation-id') || '0', 10) : 0;
-        var currentUserId = parseInt(cfg.userId || '0', 10);
-        var lastTs = threadEl ? (threadEl.getAttribute('data-last-ts') || '') : '';
+    const escapeHtml = (str) => {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    };
 
-        // Track message ids already rendered so we never append duplicates.
-        var seenIds = {};
-        if (threadEl) {
-            var existing = threadEl.querySelectorAll('[data-message-id]');
-            for (var i = 0; i < existing.length; i++) {
-                seenIds[existing[i].getAttribute('data-message-id')] = true;
-            }
-        }
+    if (threadBox) {
+        threadBox.scrollTop = threadBox.scrollHeight;
+    }
 
-        var ws = null;
-        var pollTimer = null;
-        var tokenRefreshed = false;
-        var reconnectAttempts = 0;
-        var MAX_RECONNECTS = 3;
+    if (newConvToggle && newConvForm) {
+        newConvToggle.addEventListener('click', () => {
+            newConvForm.style.display = newConvForm.style.display === 'none' ? 'block' : 'none';
+        });
+    }
 
-        function setStatus(text, cls) {
-            var el = document.getElementById('spp-realtime-status');
-            if (!el) {
-                return;
-            }
-            el.textContent = text || '';
-            el.className = 'spp-realtime-status' + (cls ? ' spp-status-' + cls : '');
-        }
-
-        function updateBadge(count) {
-            var badge = document.getElementById('spp-nav-unread-badge');
-            if (!badge) {
-                return;
-            }
-            count = parseInt(count, 10) || 0;
-            badge.textContent = String(count);
-            badge.style.display = count > 0 ? '' : 'none';
-        }
-
-        function formatDate(s) {
-            if (!s) {
-                return '';
-            }
-            var iso = (s.indexOf('T') === -1) ? s.replace(' ', 'T') + 'Z' : s;
-            var d = new Date(iso);
-            if (isNaN(d.getTime())) {
-                return s;
-            }
-            return d.toLocaleString();
-        }
-
-        function appendMessage(m, isLocal) {
-            if (!threadEl) {
-                return;
-            }
-            var id = (typeof m.id !== 'undefined' && m.id !== null) ? String(m.id) : '';
-            if (id && seenIds[id]) {
-                return;
-            }
-            if (id) {
-                seenIds[id] = true;
-            }
-
-            var senderId = parseInt(m.sender_id, 10);
-            var wrap = document.createElement('div');
-            wrap.className = 'spp-message ' + (senderId === currentUserId ? 'spp-message-sent' : 'spp-message-received');
-            if (id) {
-                wrap.setAttribute('data-message-id', id);
-            }
-
-            var name = document.createElement('strong');
-            name.className = 'spp-message-sender';
-            name.textContent = m.sender_name || '';
-
-            var p = document.createElement('p');
-            p.className = 'spp-message-body';
-            // textContent keeps the thread XSS-safe regardless of upstream content.
-            p.textContent = m.message || '';
-
-            var small = document.createElement('small');
-            small.className = 'spp-message-time';
-            small.textContent = formatDate(m.sent_at);
-
-            wrap.appendChild(name);
-            wrap.appendChild(p);
-            wrap.appendChild(small);
-
-            var placeholder = threadEl.querySelector('.spp-no-messages');
-            if (placeholder) {
-                placeholder.parentNode.removeChild(placeholder);
-            }
-
-            threadEl.appendChild(wrap);
-            threadEl.scrollTop = threadEl.scrollHeight;
-
-            if (m.sent_at) {
-                var t = String(m.sent_at);
-                if (t > lastTs) {
-                    lastTs = t;
-                }
-            }
-        }
-
-        function pollOnce() {
-            var fd = new FormData();
-            fd.append('action', 'spp_fetch_messages');
-            fd.append('nonce', cfg.nonce);
-            fd.append('conversation_id', conversationId);
-            fd.append('since', lastTs);
-
-            fetch(cfg.ajaxUrl, { method: 'POST', body: fd })
-                .then(function (res) { return res.json(); })
-                .then(function (data) {
-                    if (!data || !data.success || !data.data) {
-                        return;
-                    }
-                    var msgs = data.data.messages || [];
-                    for (var i = 0; i < msgs.length; i++) {
-                        appendMessage(msgs[i], false);
-                    }
-                    if (typeof data.data.unread !== 'undefined') {
-                        updateBadge(data.data.unread);
-                    }
-                })
-                .catch(function () {
-                    // Network blip: the next interval/event will retry.
-                });
-        }
-
-        function startPolling() {
-            if (pollTimer) {
-                return;
-            }
-            pollTimer = setInterval(pollOnce, (parseInt(cfg.pollInterval, 10) || 5) * 1000);
-        }
-
-        function stopPolling() {
-            if (pollTimer) {
-                clearInterval(pollTimer);
-                pollTimer = null;
-            }
-        }
-
-        function refreshToken() {
-            return new Promise(function (resolve) {
-                var fd = new FormData();
-                fd.append('action', 'spp_ws_token');
-                fd.append('nonce', cfg.wsTokenNonce);
-                fetch(cfg.ajaxUrl, { method: 'POST', body: fd })
-                    .then(function (res) { return res.json(); })
-                    .then(function (data) {
-                        if (data && data.success && data.data && data.data.token) {
-                            cfg.wsToken = data.data.token;
-                            resolve(true);
-                        } else {
-                            resolve(false);
-                        }
-                    })
-                    .catch(function () { resolve(false); });
-            });
-        }
-
-        function connectWs() {
-            if (!(cfg.wsEnabled && cfg.wsUrl && cfg.wsToken)) {
-                startPolling();
-                return;
-            }
-
-            var sep = cfg.wsUrl.indexOf('?') === -1 ? '?' : '&';
-            var url = cfg.wsUrl + sep + 'token=' + encodeURIComponent(cfg.wsToken);
+    // Start new conversation
+    if (newConvForm && typeof sppMessaging !== 'undefined') {
+        newConvForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const submitBtn = newConvForm.querySelector('button[type="submit"]');
+            if (submitBtn) submitBtn.disabled = true;
 
             try {
-                ws = new WebSocket(url);
-            } catch (e) {
-                startPolling();
-                return;
-            }
+                const body = new FormData(newConvForm);
+                body.append('action', 'spp_send_message');
+                body.append('nonce', sppMessaging.nonce);
 
-            setStatus(cfg.i18n ? cfg.i18n.connecting : '', 'connecting');
-
-            ws.onopen = function () {
-                stopPolling();
-                reconnectAttempts = 0;
-                setStatus('', 'connected');
-            };
-
-            ws.onmessage = function () {
-                // The WebSocket only signals "something changed"; re-fetch via AJAX
-                // (same trusted path used by polling) so access checks run server-side.
-                pollOnce();
-            };
-
-            ws.onerror = function () {
-                // The close handler performs the fallback.
-            };
-
-            ws.onclose = function () {
-                ws = null;
-                setStatus(cfg.i18n ? cfg.i18n.offline : '', 'offline');
-
-                if (!tokenRefreshed && reconnectAttempts < MAX_RECONNECTS) {
-                    tokenRefreshed = true;
-                    reconnectAttempts++;
-                    refreshToken().then(function (ok) {
-                        if (ok) {
-                            connectWs();
-                        } else {
-                            startPolling();
-                        }
-                    });
+                const res = await fetch(sppMessaging.ajaxUrl, { method: 'POST', body });
+                const data = await res.json();
+                if (data.success && data.data?.conversation_id) {
+                    window.location.search = `?conversation=${data.data.conversation_id}`;
                 } else {
-                    startPolling();
+                    showFeedback(data.data?.message || sppMessaging.i18n.error, true);
                 }
-            };
-        }
+            } finally {
+                if (submitBtn) submitBtn.disabled = false;
+            }
+        });
+    }
 
-        // Send handler.
-        var form = document.getElementById('spp-reply-form');
-        if (form) {
-            form.addEventListener('submit', function (e) {
-                e.preventDefault();
-                var ta = document.getElementById('spp-reply-message');
-                var msg = ta ? ta.value.trim() : '';
-                if (!msg || !conversationId) {
-                    return;
+    // Reply in active thread
+    if (replyForm && typeof sppMessaging !== 'undefined') {
+        replyForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('spp-reply-btn');
+            const input = document.getElementById('spp-reply-input');
+            if (btn) btn.disabled = true;
+
+            const body = new FormData(replyForm);
+            body.append('action', 'spp_send_message');
+            body.append('nonce', sppMessaging.nonce);
+
+            try {
+                const res = await fetch(sppMessaging.ajaxUrl, { method: 'POST', body });
+                const data = await res.json();
+                if (data.success) {
+                    if (input) input.value = '';
+                    renderMessages(data.data?.messages || []);
+                } else {
+                    showFeedback(data.data?.message || sppMessaging.i18n.error, true);
                 }
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        });
+    }
 
-                var btn = document.getElementById('spp-send-reply-btn');
-                var original = btn ? btn.textContent : '';
-                if (btn) {
-                    btn.disabled = true;
+    // 5-second polling for active conversation & unread badge
+    if (shell && typeof sppMessaging !== 'undefined') {
+        const activeConvId = shell.getAttribute('data-active-conversation');
+        setInterval(async () => {
+            if (document.hidden) return;
+            const url = `${sppMessaging.ajaxUrl}?action=spp_fetch_messages&nonce=${encodeURIComponent(sppMessaging.nonce)}&conversation_id=${encodeURIComponent(activeConvId || '0')}`;
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                if (data.success) {
+                    if (activeConvId && data.data?.messages) {
+                        renderMessages(data.data.messages);
+                    }
+                    const badge = document.getElementById('spp-nav-unread-badge');
+                    if (badge && data.data?.unread_total !== undefined) {
+                        badge.textContent = data.data.unread_total;
+                        badge.style.display = Number(data.data.unread_total) > 0 ? 'inline-block' : 'none';
+                    }
                 }
+            } catch (_) {}
+        }, sppMessaging.pollInterval || 5000);
+    }
 
-                var fd = new FormData();
-                fd.append('action', 'spp_send_reply');
-                fd.append('nonce', cfg.nonce);
-                fd.append('conversation_id', conversationId);
-                fd.append('message', msg);
+    // Notification bell toggle & mark all read
+    const bellBtn = document.getElementById('spp-notif-bell');
+    const bellDropdown = document.getElementById('spp-notif-dropdown');
+    const markReadBtn = document.getElementById('spp-notif-mark-read');
 
-                fetch(cfg.ajaxUrl, { method: 'POST', body: fd })
-                    .then(function (res) { return res.json(); })
-                    .then(function (data) {
-                        if (data && data.success && data.data) {
-                            if (ta) {
-                                ta.value = '';
-                            }
-                            appendMessage(data.data, true);
-                        } else {
-                            window.alert(cfg.i18n ? cfg.i18n.sendError : 'Error');
-                        }
-                    })
-                    .catch(function () {
-                        window.alert(cfg.i18n ? cfg.i18n.sendError : 'Error');
-                    })
-                    .then(function () {
-                        if (btn) {
-                            btn.disabled = false;
-                            btn.textContent = original;
-                        }
-                    });
-            });
-        }
+    if (bellBtn && bellDropdown) {
+        bellBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            bellDropdown.style.display = bellDropdown.style.display === 'none' ? 'block' : 'none';
+        });
+    }
 
-        // Kick things off: connect WebSocket (which itself falls back to polling).
-        connectWs();
-        // One immediate refresh to catch anything that arrived between render and load.
-        pollOnce();
-    });
-})();
+    if (markReadBtn && typeof sppMessaging !== 'undefined') {
+        markReadBtn.addEventListener('click', async () => {
+            const body = new FormData();
+            body.append('action', 'spp_mark_notifications_read');
+            body.append('nonce', sppMessaging.nonce);
+            await fetch(sppMessaging.ajaxUrl, { method: 'POST', body });
+            const countEl = document.getElementById('spp-notif-count');
+            if (countEl) countEl.style.display = 'none';
+            if (bellDropdown) bellDropdown.style.display = 'none';
+        });
+    }
+});

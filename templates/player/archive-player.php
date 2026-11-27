@@ -9,8 +9,17 @@ if (!defined('ABSPATH')) {
 
 get_header();
 
-$positions = ['Goalkeeper', 'Defender', 'Midfielder', 'Forward', 'Guard', 'Center', 'Pitcher', 'Quarterback'];
-$sports    = ['Soccer', 'Basketball', 'Baseball', 'Football', 'Tennis', 'Cricket', 'Volleyball', 'Track & Field'];
+$positions = ['Point Guard', 'Shooting Guard', 'Small Forward', 'Power Forward', 'Center', 'Guard', 'Forward'];
+$sports    = ['Basketball'];
+
+global $wpdb;
+$ranking_categories = get_transient('spp_ranking_categories_active');
+if (false === $ranking_categories) {
+    $ranking_categories = $wpdb->get_results(
+        "SELECT id, name FROM {$wpdb->prefix}spp_ranking_categories WHERE is_active = 1 ORDER BY name ASC"
+    ) ?: [];
+    set_transient('spp_ranking_categories_active', $ranking_categories, 15 * MINUTE_IN_SECONDS);
+}
 
 $initial_query = new WP_Query([
     'post_type'      => 'player',
@@ -70,6 +79,9 @@ $initial_query = new WP_Query([
                     <label for="spp_dir_ranking"><?php esc_html_e('Ranking', 'sports-player-platform'); ?></label>
                     <select id="spp_dir_ranking" name="ranking" class="spp-filter-ranking">
                         <option value=""><?php esc_html_e('All Rankings', 'sports-player-platform'); ?></option>
+                        <?php foreach ($ranking_categories as $cat): ?>
+                            <option value="<?php echo esc_attr((string) $cat->id); ?>"><?php echo esc_html($cat->name); ?></option>
+                        <?php endforeach; ?>
                     </select>
                 </div>
 

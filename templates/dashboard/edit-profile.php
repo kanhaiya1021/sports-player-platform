@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-$positions = ['Goalkeeper', 'Defender', 'Midfielder', 'Forward', 'Guard', 'Center', 'Pitcher', 'Quarterback', 'Other'];
+$positions = ['Point Guard', 'Shooting Guard', 'Small Forward', 'Power Forward', 'Center', 'Guard', 'Forward', 'Other'];
 ?>
 <div class="spp-dashboard-wrap">
     <?php include SPP_PLUGIN_DIR . 'templates/dashboard/nav.php'; ?>
@@ -108,12 +108,59 @@ $positions = ['Goalkeeper', 'Defender', 'Midfielder', 'Forward', 'Guard', 'Cente
         <!-- Tab 3: Media -->
         <div class="spp-tab-panel" data-panel="media">
             <p class="spp-form-field">
-                <label for="spp_image_gallery"><?php esc_html_e('Photo Gallery URLs (one per line)', 'sports-player-platform'); ?></label>
-                <textarea id="spp_image_gallery" name="image_gallery" rows="3"><?php echo esc_textarea($profile['image_gallery']); ?></textarea>
+                <label><?php esc_html_e('Gallery Images', 'sports-player-platform'); ?></label>
+                <p style="font-size:13px; color:#6b7280; margin:4px 0 12px;"><?php esc_html_e('Add image URLs or upload up to 6 images (supports multiple files).', 'sports-player-platform'); ?></p>
+
+                <input type="hidden" id="spp_image_count" name="image_count" value="0">
+                <div id="spp-image-gallery-wrap" class="spp-image-grid">
+                    <?php
+                    $image_urls = explode("\n", trim($profile['image_gallery'] ?? ''));
+                    $image_urls = array_filter(array_map('trim', $image_urls));
+                    foreach ($image_urls as $idx => $url):
+                    ?>
+                        <div class="spp-image-card" data-url="<?php echo esc_attr($url); ?>" style="position: relative; padding: 12px; background: #fff; border: 1px solid var(--spp-border); border-radius: 8px; display: flex; gap: 12px; align-items: center;">
+                            <div class="spp-image-preview" style="background-image: url('<?php echo esc_url($url); ?>'); width: 60px; height: 60px; border-radius: 6px;"></div>
+                            <input type="url" name="image_gallery[]" value="<?php echo esc_attr($url); ?>" class="spp-image-url" placeholder="Image URL" style="flex: 1;">
+                            <button type="button" class="spp-image-remove" aria-label="Remove" style="position: absolute; top: 8px; right: 8px;">&times;</button>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+
+                <button type="button" id="spp-add-image-gallery" class="spp-btn spp-btn-small spp-btn-secondary" style="margin-top: 12px;">
+                    <?php esc_html_e('Add Image URL', 'sports-player-platform'); ?>
+                </button>
             </p>
-            <p class="spp-form-field">
-                <label for="spp_videos_highlights"><?php esc_html_e('Highlight Video URLs (one per line)', 'sports-player-platform'); ?></label>
-                <textarea id="spp_videos_highlights" name="videos_highlights" rows="3"><?php echo esc_textarea($profile['videos_highlights']); ?></textarea>
+
+            <div style="margin-top: 16px; padding: 16px; border: 2px dashed var(--spp-border); border-radius: 8px; background: #fff;">
+                <label for="spp_image_upload" style="font-weight: 600; display: block; margin-bottom: 8px; color: #374151;"><?php esc_html_e('Upload Image Files', 'sports-player-platform'); ?></label>
+                <input type="file" id="spp_image_upload" name="image_gallery_upload[]" accept="image/*" multiple style="width: 100%; margin-bottom: 8px;">
+                <div id="spp-image-preview-container" style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;"></div>
+                <p style="font-size: 12px; color: #6b7280; margin: 0;"><?php esc_html_e('Supports JPG, PNG, GIF. Max 6 images total. You can select multiple files at once.', 'sports-player-platform'); ?></p>
+            </div>
+
+            <p class="spp-form-field" style="margin-top: 20px;">
+                <label for="spp_video_urls"><?php esc_html_e('Highlight Videos', 'sports-player-platform'); ?></label>
+                <p style="font-size:13px; color:#6b7280; margin:4px 0 8px;"><?php esc_html_e('Add video URLs or upload up to 6 video files (supports multiple files):', 'sports-player-platform'); ?></p>
+                <div id="spp-video-gallery-wrap" class="spp-url-fields">
+                    <?php
+                    $video_urls = explode("\n", trim($profile['videos_highlights'] ?? ''));
+                    $video_urls = array_filter(array_map('trim', $video_urls));
+                    foreach ($video_urls as $idx => $url):
+                    ?>
+                        <div class="spp-url-field">
+                            <input type="url" name="videos_highlights[]" value="<?php echo esc_attr($url); ?>" placeholder="https://youtube.com/watch?v=..." class="spp-url-input">
+                            <button type="button" class="spp-url-remove" aria-label="Remove">&times;</button>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+                <button type="button" id="spp-add-video-gallery" class="spp-btn spp-btn-small spp-btn-secondary" style="margin-top: 8px;">
+                    <?php esc_html_e('Add Video URL', 'sports-player-platform'); ?>
+                </button>
+                <div style="margin-top: 12px; padding: 12px; border: 1px solid var(--spp-border); border-radius: 8px; background: #f9fafb;">
+                    <label for="spp_video_upload" style="font-weight: 600; display: block; margin-bottom: 8px;"><?php esc_html_e('Upload Video File', 'sports-player-platform'); ?></label>
+                    <input type="file" id="spp_video_upload" name="video_gallery_upload[]" accept="video/*" multiple style="width: 100%;">
+                    <p style="font-size: 12px; color: #6b7280; margin: 4px 0 0;"><?php esc_html_e('Supports MP4, MOV, AVI, WEBM. Max 6 videos total. Local files will be uploaded to media library.', 'sports-player-platform'); ?></p>
+                </div>
             </p>
         </div>
 

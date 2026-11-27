@@ -719,6 +719,9 @@ if (!class_exists('SPP_Admin')) {
                                     <td><?php echo esc_html($cat->description); ?></td>
                                     <td><?php echo $cat->is_active ? 'Active' : 'Inactive'; ?></td>
                                     <td>
+                                        <a href="<?php echo esc_url(add_query_arg('ranking_category_id', $cat->id, admin_url('admin.php?page=spp-rankings'))); ?>" class="button button-small">
+                                            <?php esc_html_e('View Rankings', 'sports-player-platform'); ?>
+                                        </a>
                                         <button type="button" class="button button-small spp-edit-category" data-id="<?php echo esc_attr($cat->id); ?>" data-name="<?php echo esc_attr($cat->name); ?>" data-description="<?php echo esc_attr($cat->description); ?>">
                                             <?php esc_html_e('Edit', 'sports-player-platform'); ?>
                                         </button>

@@ -33,7 +33,7 @@ if (!class_exists('SPP_Frontend')) {
             add_action('template_redirect', [$this, 'handle_events_embed']);
             add_action('parse_request', [$this, 'parse_player_request'], 1);
             add_filter('template_include', [$this, 'load_player_template']);
-            add_action('pre_get_posts', [$this, 'maybe_handle_player_query']);
+            add_action('pre_get_posts', [$this, 'maybe_handle_player_query'], 10, 1);
             $this->create_articles_post_type();
         }
 
@@ -61,6 +61,19 @@ if (!class_exists('SPP_Frontend')) {
                 $wp->is_archive = false;
                 $wp->is_404 = false;
                 $wp->requested_query_id = $player_post->ID;
+            }
+        }
+
+        /**
+         * Ensure main archive queries for player/team post types only show published posts.
+         */
+        public function maybe_handle_player_query(WP_Query $query): void {
+            if (is_admin() || !$query->is_main_query()) {
+                return;
+            }
+
+            if ($query->is_post_type_archive(['player', 'team'])) {
+                $query->set('post_status', 'publish');
             }
         }
 

@@ -66,6 +66,20 @@ if (!class_exists('SPP_Public')) {
             add_filter('template_include', [$this, 'load_custom_templates']);
             add_action('wp_ajax_spp_filter_players', [$this, 'ajax_filter_players']);
             add_action('wp_ajax_nopriv_spp_filter_players', [$this, 'ajax_filter_players']);
+
+            // Add rewrite rules for custom pages
+            add_action('init', [$this, 'add_rewrite_rules']);
+        }
+
+        /**
+         * Add rewrite rules for custom public pages
+         */
+        public function add_rewrite_rules(): void {
+            add_rewrite_rule(
+                '^rankings/?$',
+                'index.php?pagename=rankings',
+                'top'
+            );
         }
 
         /**
@@ -705,7 +719,13 @@ if (!class_exists('SPP_Public')) {
             }
 
             // Handle custom page template for rankings
-            if (is_page('rankings')) {
+            if (is_page('rankings') || (is_page() && strpos($_SERVER['REQUEST_URI'] ?? '', '/rankings/') !== false)) {
+                $custom = SPP_PLUGIN_DIR . 'spp/rankings.php';
+                return file_exists($custom) ? $custom : $template;
+            }
+
+            // Also check for rankings CPT archive
+            if (is_post_type_archive('spp_ranking') || (is_page() && basename(get_permalink()) === 'rankings')) {
                 $custom = SPP_PLUGIN_DIR . 'spp/rankings.php';
                 return file_exists($custom) ? $custom : $template;
             }
